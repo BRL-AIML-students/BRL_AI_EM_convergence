@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "sphere_auto",
+  "output_dir": "outputs",
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "geometry": {"kind": "sphere", "parameters": {"radius": 25.0}},
+  "mesh": {"mode": "auto", "scale_fraction": 0.08, "chord_tolerance_fraction": 0.003}
+}
+

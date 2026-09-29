@@ -1,0 +1,24 @@
+{
+  "folders": [{"path": "."}],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "python.analysis.extraPaths": ["${workspaceFolder}/01_mesh_generator"],
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": ["01_mesh_generator/tests"],
+    "files.exclude": {"**/__pycache__": true, ".pytest_cache": true},
+    "search.exclude": {".venv": true, ".tools": true, ".cache": true, "**/outputs": true}
+  },
+  "extensions": {"recommendations": ["ms-python.python", "ms-python.vscode-pylance"]},
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {"label": "BRL: Setup development environment", "type": "process", "command": "powershell.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/setup.ps1", "-Dev"], "problemMatcher": []},
+      {"label": "BRL: Mesh generator", "type": "process", "command": "${workspaceFolder}/.venv/Scripts/python.exe", "args": ["-m", "mesh_ui.server"], "options": {"cwd": "${workspaceFolder}/01_mesh_generator"}, "problemMatcher": []},
+      {"label": "BRL: Tests", "type": "process", "command": "${workspaceFolder}/.venv/Scripts/python.exe", "args": ["-m", "pytest"], "options": {"cwd": "${workspaceFolder}"}, "group": "test", "problemMatcher": []}
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [{"name": "BRL mesh UI", "type": "debugpy", "request": "launch", "module": "mesh_ui.server", "cwd": "${workspaceFolder}/01_mesh_generator", "console": "integratedTerminal"}]
+  }
+}

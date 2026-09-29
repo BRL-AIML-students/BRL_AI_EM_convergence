@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAS 표면 메시 뷰어</title>
+<style>
+:root{font-family:system-ui,"Malgun Gothic",sans-serif;color:#eaf0f7;background:#101720}
+*{box-sizing:border-box}body{margin:0;height:100vh;min-height:540px;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;background:#19232f;border-bottom:1px solid #354253;flex-wrap:wrap}
+h1{font-size:20px;margin:0;font-weight:700;letter-spacing:-.02em}.sub{color:#a5b4c7;font-size:13px;margin-top:4px}
+.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button,.file-button{border:1px solid #54779b;background:#254d70;color:white;border-radius:8px;padding:9px 14px;font:inherit;font-size:13px;cursor:pointer}
+button:hover,.file-button:hover{background:#34668e}button.secondary{background:#25313f;border-color:#4a596a}
+label.check{font-size:13px;color:#d3deea;display:flex;gap:6px;align-items:center;cursor:pointer}
+input[type=file]{display:none}input[type=checkbox]{accent-color:#55abef}
+main{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:radial-gradient(circle at 55% 45%,#203146,#101720 72%)}
+canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none;cursor:grab}canvas.dragging{cursor:grabbing}
+.empty{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;border:1px dashed #60768d;border-radius:16px;padding:30px 38px;background:#172231e8;max-width:min(90vw,480px);pointer-events:none}
+.empty strong{display:block;font-size:18px;margin-bottom:8px}.empty span{font-size:14px;color:#b4c2d2;line-height:1.6}
+.empty[hidden]{display:none}.drop{position:absolute;inset:14px;border:2px dashed #63b6fb;border-radius:14px;background:#16508377;display:grid;place-items:center;font-size:22px;font-weight:700;pointer-events:none}.drop[hidden]{display:none}
+footer{background:#19232f;border-top:1px solid #354253;padding:12px 24px;display:flex;gap:22px;justify-content:space-between;flex-wrap:wrap;font-size:13px;color:#b9c7d7}
+#status{overflow-wrap:anywhere}.error{color:#ffb0a8!important}.pill{color:#dce8f5}
+@media(max-width:700px){header{padding:14px}main{min-height:420px}footer{padding:12px 14px}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>NAS 표면 메시 뷰어</h1><div class="sub">Gmsh 표면 메시 · GRID / CTRIA3</div></div>
+  <div class="tools">
+    <label class="file-button" for="file">NAS 파일 열기</label><input id="file" type="file" accept=".nas,.bdf,.dat,.txt">
+    <button class="secondary" id="fit" type="button">화면 맞춤</button>
+    <label class="check"><input id="edges" type="checkbox">삼각형 경계</label>
+    <label class="check"><input id="colors" type="checkbox" checked>PID별 색상</label>
+  </div>
+</header>
+<main id="surface">
+  <canvas id="view" aria-label="회전 및 확대할 수 있는 NAS 표면 메시"></canvas>
+  <div class="empty" id="empty"><strong>NAS 파일을 열어주세요</strong><span>버튼으로 선택하거나 이 창에 파일을 끌어 놓으세요.<br>드래그: 회전 · 휠: 확대 · Shift+드래그: 이동</span></div>
+  <div class="drop" id="drop" hidden>여기에 NAS 파일을 놓으세요</div>
+</main>
+<footer><span id="status">파일을 기다리는 중</span><span class="pill" id="stats">노드 — · 삼각형 — · PID —</span></footer>
+<script>/*__NAS_DATA__*/</script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const canvas=$("view"),ctx=canvas.getContext("2d",{alpha:false});
+let mesh=null,name="",yaw=0.55,pitch=-0.42,zoom=1,panX=0,panY=0,drag=null,scheduled=false;
+function status(message,error=false){const el=$("status");el.textContent=message;el.classList.toggle("error",error)}
+function real(token){
+  const adjusted=token.replace(/[dD]/g,"E").replace(/(\d)([+-]\d+)$/,"$1E$2");
+  const value=Number(adjusted);
+  if(!token||!Number.isFinite(value))throw Error("유효하지 않은 좌표: "+token);
+  return value;
+}
+function parseNAS(text){
+  const nodes=new Map(),elements=new Map();let unit="",ended=false;
+  const lines=text.split(/\r?\n/);
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i].trim();if(!line)continue;
+    if(line.startsWith("$")){const m=line.match(/^\$\s*length unit:\s*(\S+)/i);if(m)unit=m[1];continue}
+    if(ended)throw Error(`행 ${i+1}: ENDDATA 뒤에 데이터가 있습니다.`);
+    let f;
+    if(line.includes(",")){
+      f=line.split("$")[0].split(",").map(s=>s.trim());
+    }else{
+      const card=lines[i].slice(0,8).trim().toUpperCase();
+      if(card==="GRID*"){
+        const continuation=lines[i+1]||"";
+        if(!continuation.slice(0,8).trim().startsWith("*"))throw Error(`행 ${i+1}: GRID*의 이어지는 줄이 없습니다.`);
+        f=["GRID",lines[i].slice(8,24).trim(),lines[i].slice(24,40).trim(),
+          lines[i].slice(40,56).trim(),lines[i].slice(56,72).trim(),continuation.slice(8,24).trim()];
+        i++;
+      }else if(card==="GRID"||card==="CTRIA3"){
+        f=[card,...[8,16,24,32,40].map(start=>lines[i].slice(start,start+8).trim())];
+      }else f=[card];
+    }
+    const card=f[0].toUpperCase();
+    try{
+      if(card==="GRID"){
+        if(f.length!==6)throw Error("GRID 필드 6개가 필요합니다.");
+        const id=Number(f[1]);if(!Number.isSafeInteger(id)||id<=0||nodes.has(id))throw Error("노드 ID가 잘못되었거나 중복되었습니다.");
+        nodes.set(id,[real(f[3]),real(f[4]),real(f[5])]);
+      }else if(card==="CTRIA3"){
+        if(f.length!==6)throw Error("CTRIA3 필드 6개가 필요합니다.");
+        const id=Number(f[1]),pid=Number(f[2]),tri=f.slice(3).map(Number);
+        if(!Number.isSafeInteger(id)||id<=0||elements.has(id)||!Number.isSafeInteger(pid)||pid<=0||tri.some(v=>!Number.isSafeInteger(v)||v<=0)||new Set(tri).size!==3)throw Error("요소 ID, PID 또는 노드 번호가 잘못되었습니다.");
+        elements.set(id,{pid,tri});
+      }else if(card==="ENDDATA"){
+        if(f.length!==1)throw Error("ENDDATA 형식이 잘못되었습니다.");ended=true;
+      }else throw Error("지원하지 않는 카드: "+card);
+    }catch(err){throw Error(`행 ${i+1}: ${err.message}`)}
+  }
+  if(!ended||!nodes.size||!elements.size)throw Error("GRID, CTRIA3, ENDDATA 카드가 모두 필요합니다.");
+  const ids=[...nodes.keys()].sort((a,b)=>a-b),index=new Map(ids.map((v,i)=>[v,i]));
+  const points=ids.map(id=>nodes.get(id)),faces=[];
+  for(const id of [...elements.keys()].sort((a,b)=>a-b)){
+    const {pid,tri}=elements.get(id);
+    if(tri.some(v=>!index.has(v)))throw Error(`요소 ${id}에 존재하지 않는 노드가 있습니다.`);
+    faces.push({v:tri.map(v=>index.get(v)),pid});
+  }
+  const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+  for(const p of points)for(let k=0;k<3;k++){min[k]=Math.min(min[k],p[k]);max[k]=Math.max(max[k],p[k])}
+  const center=min.map((v,k)=>(v+max[k])/2),span=Math.max(...max.map((v,k)=>v-min[k]));
+  if(!Number.isFinite(span)||span<=0)throw Error("모든 노드가 같은 위치에 있습니다.");
+  const normalized=points.map(p=>p.map((v,k)=>(v-center[k])/span));
+  return {points:normalized,faces,unit,nodeCount:points.length,pids:[...new Set(faces.map(f=>f.pid))].sort((a,b)=>a-b)};
+}
+function sizeCanvas(){
+  const rect=$("surface").getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  canvas.width=Math.max(1,Math.round(rect.width*dpr));canvas.height=Math.max(1,Math.round(rect.height*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);requestDraw();
+}
+function showError(message){
+  status(message,true);
+  const empty=$("empty");empty.hidden=false;
+  empty.querySelector("strong").textContent="메시를 표시하지 못했습니다";
+  empty.querySelector("span").textContent=message;
+}
+function requestDraw(){if(!scheduled){scheduled=true;requestAnimationFrame(()=>{scheduled=false;try{draw()}catch(error){showError("렌더링 오류: "+error.message)}})}}
+function rotate(p){const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const x=p[0]*cy-p[1]*sy,y=p[0]*sy+p[1]*cy;
+  return [x,y*cp-p[2]*sp,y*sp+p[2]*cp];
+}
+function draw(){
+  const dpr=window.devicePixelRatio||1,w=canvas.width/dpr,h=canvas.height/dpr;
+  ctx.fillStyle="#101923";ctx.fillRect(0,0,w,h);
+  if(!mesh)return;
+  const scale=Math.min(w,h)*0.87*zoom,cx=w/2+panX,cy=h/2+panY;
+  const transformed=mesh.points.map(p=>rotate(p));
+  const projected=transformed.map(p=>[cx+p[0]*scale,cy-p[1]*scale,p[2]]);
+  const visible=mesh.faces.map(face=>({face,depth:(projected[face.v[0]][2]+projected[face.v[1]][2]+projected[face.v[2]][2])/3})).sort((a,b)=>a.depth-b.depth);
+  const pidIndex=new Map(mesh.pids.map((pid,i)=>[pid,i]));
+  const edges=$("edges").checked,colorful=$("colors").checked;
+  for(const {face} of visible){
+    const [a,b,c]=face.v.map(i=>transformed[i]);
+    const u=b.map((v,k)=>v-a[k]),v=c.map((value,k)=>value-a[k]);
+    const nx=u[1]*v[2]-u[2]*v[1],ny=u[2]*v[0]-u[0]*v[2],nz=u[0]*v[1]-u[1]*v[0];
+    const magnitude=Math.hypot(nx,ny,nz)||1;
+    const light=Math.abs((nx*0.35+ny*0.3+nz*0.89)/magnitude);
+    const hue=colorful?(pidIndex.get(face.pid)*137.508)%360:203;
+    const lightness=Math.round(31+25*light);
+    ctx.fillStyle=`hsl(${hue} 65% ${lightness}%)`;
+    const [p,q,r]=face.v.map(i=>projected[i]);
+    ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.lineTo(r[0],r[1]);ctx.closePath();ctx.fill();
+    if(edges){ctx.strokeStyle="rgba(13,20,29,.55)";ctx.lineWidth=.55;ctx.stroke()}
+  }
+  const origin=[72,h-65],axisLength=32;
+  for(const [label,vector,color] of [["X",[1,0,0],"#ff8585"],["Y",[0,1,0],"#8fe396"],["Z",[0,0,1],"#83bcff"]]){
+    const p=rotate(vector);ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(origin[0]+p[0]*axisLength,origin[1]-p[1]*axisLength);ctx.stroke();
+    ctx.font="bold 12px system-ui";ctx.fillText(label,origin[0]+p[0]*axisLength+3,origin[1]-p[1]*axisLength-3);
+  }
+}
+function fit(){yaw=.55;pitch=-.42;zoom=1;panX=0;panY=0;requestDraw()}
+function load(text,fileName){
+  try{const next=parseNAS(text);mesh=next;name=fileName;$("empty").hidden=true;
+    status(`${name}${next.unit?` · 단위 ${next.unit}`:""}`);
+    $("stats").textContent=`노드 ${next.nodeCount.toLocaleString()} · 삼각형 ${next.faces.length.toLocaleString()} · PID ${next.pids.length}`;
+    fit();sizeCanvas();
+  }catch(err){showError(err.message)}
+}
+function openFile(file){if(!file)return;status(`${file.name} 읽는 중…`);const reader=new FileReader();reader.onload=()=>load(reader.result,file.name);reader.onerror=()=>showError("파일을 읽을 수 없습니다.");reader.readAsText(file,"utf-8")}
+$("file").addEventListener("change",e=>{openFile(e.target.files[0]);e.target.value=""});
+$("fit").addEventListener("click",fit);$("edges").addEventListener("change",requestDraw);$("colors").addEventListener("change",requestDraw);
+canvas.addEventListener("pointerdown",e=>{if(!mesh)return;canvas.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,pan:e.shiftKey};canvas.classList.add("dragging")});
+canvas.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+  if(drag.pan){panX+=dx;panY+=dy}else{yaw+=dx*.008;pitch=Math.max(-1.55,Math.min(1.55,pitch+dy*.008))}requestDraw()});
+function endDrag(){drag=null;canvas.classList.remove("dragging")}
+canvas.addEventListener("pointerup",endDrag);canvas.addEventListener("pointercancel",endDrag);
+canvas.addEventListener("wheel",e=>{if(!mesh)return;e.preventDefault();zoom=Math.max(.1,Math.min(30,zoom*Math.exp(-e.deltaY*.001)));requestDraw()},{passive:false});
+let dropDepth=0;
+window.addEventListener("dragenter",e=>{e.preventDefault();dropDepth++;$("drop").hidden=false});
+window.addEventListener("dragleave",e=>{e.preventDefault();dropDepth=Math.max(0,dropDepth-1);if(!dropDepth)$("drop").hidden=true});
+window.addEventListener("dragover",e=>e.preventDefault());
+window.addEventListener("drop",e=>{e.preventDefault();dropDepth=0;$("drop").hidden=true;openFile(e.dataTransfer.files[0])});
+window.addEventListener("resize",sizeCanvas);
+window.addEventListener("message",e=>{
+  if(e.origin!==location.origin||e.source!==window.parent)return;
+  if(e.data&&e.data.type==="brl-load-nas"&&typeof e.data.text==="string"&&typeof e.data.name==="string")load(e.data.text,e.data.name);
+});
+if(typeof ResizeObserver!=="undefined")new ResizeObserver(sizeCanvas).observe($("surface"));
+sizeCanvas();
+if(window.EMBEDDED_NAS)load(window.EMBEDDED_NAS,window.EMBEDDED_NAME||"mesh.nas");
+</script>
+</body>
+</html>

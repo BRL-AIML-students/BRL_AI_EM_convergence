@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/geometry-mesh/config-v1.schema.json",
+  "title": "Geometry surface mesh configuration v1",
+  "type": "object",
+  "required": ["version", "name", "output_dir", "geometry"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "name": {"type": "string", "minLength": 1},
+    "output_dir": {"type": "string", "minLength": 1},
+    "length_unit": {"enum": ["m", "cm", "mm", "um"], "default": "mm"},
+    "output_unit": {"enum": ["m", "cm", "mm", "um"], "default": "mm"},
+    "geometry": {"$ref": "#/$defs/geometryNode"},
+    "mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["auto", "fixed"]},
+        "scale_fraction": {"type": "number", "exclusiveMinimum": 0},
+        "chord_tolerance_fraction": {"type": "number", "exclusiveMinimum": 0},
+        "small_feature_divisions": {"type": "number", "exclusiveMinimum": 0},
+        "minimum_size_fraction": {"type": "number", "exclusiveMinimum": 0},
+        "user_size_cap": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "target_size": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "growth_assessment_limit": {"type": "number", "exclusiveMinimum": 0},
+        "element_budget": {"type": ["integer", "null"], "minimum": 4},
+        "budget_policy": {"enum": ["respect_features", "respect_budget"]},
+        "narrow_gap": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "max_fraction": {"type": "number", "exclusiveMinimum": 0},
+            "divisions": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "wave": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "frequency_hz": {"type": ["number", "null"], "exclusiveMinimum": 0},
+            "elements_per_wavelength": {"type": "number", "exclusiveMinimum": 0},
+            "relative_permittivity": {"type": "number", "exclusiveMinimum": 0},
+            "relative_permeability": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "local": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "feature_threshold_fraction": {"type": "number", "exclusiveMinimum": 0},
+            "near_size_fraction": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+            "transition_fraction": {"type": "number", "exclusiveMinimum": 0},
+            "boxes": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+              "required": ["min", "max", "size"], "properties": {
+                "min": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+                "max": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+                "size": {"type": "number", "exclusiveMinimum": 0}
+              }}}
+          }
+        }
+      }
+    },
+    "export": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"pid_start": {"type": "integer", "minimum": 1}}
+    }
+  },
+  "$defs": {
+    "geometryNode": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["plate", "disk", "sphere", "box", "cylinder", "cad", "fuse", "cut", "intersect"]},
+        "path": {"type": "string"},
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "length": {"type": "number", "exclusiveMinimum": 0},
+            "width": {"type": "number", "exclusiveMinimum": 0},
+            "height": {"type": "number", "exclusiveMinimum": 0},
+            "radius": {"type": "number", "exclusiveMinimum": 0},
+            "origin": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}
+          }
+        },
+        "objects": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/geometryNode"}}
+      }
+    }
+  }
+}
