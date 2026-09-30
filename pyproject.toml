@@ -1,0 +1,21 @@
+[project]
+name = "brl-ai-em-convergence"
+version = "0.1.0"
+description = "BRL CAD-to-mesh tools and future MoM integration"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "gmsh==4.15.2",
+  "numpy==1.26.4",
+  "pyNastran==1.4.1",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.2"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["01_mesh_generator/tests"]
+pythonpath = ["01_mesh_generator"]
+addopts = "-q --import-mode=importlib"

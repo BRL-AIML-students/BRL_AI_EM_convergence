@@ -1,0 +1,43 @@
+# Computer-specific runtime, cache and editor state
+.venv/
+.tools/
+.cache/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+
+# User CAD files and generated data; small reviewed examples can be added explicitly
+**/outputs/
+*.step
+*.stp
+*.iges
+*.igs
+*.brep
+*.msh
+*.nas
+*.bdf
+*.stl
+!**/examples/*.nas
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Distribution files and temporary artifacts
+*.exe
+*.dll
+*.zip
+*.7z
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
