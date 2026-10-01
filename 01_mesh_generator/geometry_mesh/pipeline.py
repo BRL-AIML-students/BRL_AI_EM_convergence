@@ -23,7 +23,7 @@ from .sizing import apply as apply_sizing, plan as plan_sizing
 
 
 def _profile() -> dict[str, Any]:
-    path = Path(__file__).parent / "profiles" / "quality-v1.json"
+    path = Path(__file__).parent / "profiles" / "quality-v2.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -86,13 +86,17 @@ def run(configuration: dict[str, Any], progress: Callable[[str], None] | None = 
             ),
         }
         profile = _profile()
-        assessment = analyze(mesh, geometry, sizing, profile)
+        assessment = analyze(mesh, geometry, sizing, profile, cfg["quality"])
         nas_path = stage / f'{cfg["name"]}.nas'
         if not assessment["fatal_gates"]:
             write_nas(nas_path, mesh, cfg["output_unit"])
             add_nas_result(assessment, validate_nas(nas_path, mesh))
+            if assessment["fatal_gates"]:
+                nas_path.unlink(missing_ok=True)
+        gmsh.option.setNumber("Mesh.SaveAll", 1)
+        gmsh.write(str(stage / "diagnostic.msh"))
         report = {
-            "report_version": "1.0.0", "run_id": run_id,
+            "report_version": "2.0.0", "run_id": run_id,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "status": "invalid" if assessment["fatal_gates"] else "complete",
             "configuration": cfg,
@@ -103,7 +107,7 @@ def run(configuration: dict[str, Any], progress: Callable[[str], None] | None = 
             },
             "geometry": geometry, "sizing": sizing, "surface_groups": groups,
             "assessment": assessment, "score_profile": profile,
-            "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "report_json": "report.json", "quality_html": "quality_report.html"},
+            "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "diagnostic_mesh": "diagnostic.msh", "report_json": "report.json", "quality_html": "quality_report.html"},
             "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False},
             "limitations": [
                 "Imported CAD and boolean CSG geometry fidelity is not assessed in version 0.1 because no robust analytic reference or trimmed-surface projection audit is implemented.",

@@ -75,4 +75,21 @@ cd .\01_mesh_generator
 ..\.venv\Scripts\python.exe -m mesh_ui.server --no-browser --port 8765
 ```
 
-MoM 계산 기능은 이 메시 도구에 포함되지 않습니다. 별도 폴더에 추가할 향후 MoM 솔버는 NAS 파일을 입력으로 받는 파일 인터페이스를 사용하도록 설계합니다. 본 문서는 MoM용 재료, 경계 조건, 기저 함수 또는 솔버 응답 데이터 형식을 정의하지 않습니다.
+MoM 연결과 해석 교정은 사용자 요청 전까지 작업 범위에 포함하지 않습니다.
+
+## 품질 게이트 v2
+
+설정 `version: 1`의 기존 필드는 유지하며 선택적 `quality` 필드를 추가했습니다. 보고서와 프로필 버전은 2.0.0입니다. 기존 설정에도 새 기본 게이트가 적용됩니다. 모든 요소가 Verdict형 AR ≤ 3 및 최소 내각 ≥ 20°를 만족해야 정상 NAS가 발행됩니다. 숫자는 초기 기하 운영 정책이며 해석 정확도 보증값이 아닙니다. 자동 예외는 없습니다.
+
+```json
+{"quality": {"max_aspect_ratio": 3, "min_angle_deg": 20,
+  "topology": {"boundary_mode": "auto", "absolute_tolerance": 0,
+    "relative_tolerance": 1e-10, "protected_gap": null,
+    "separated_surface_pairs": [], "max_candidate_tests": 2000000}}}
+```
+
+AR는 1–3, 최소 내각은 20–60° 범위에서 더 엄격하게 설정할 수 있습니다. `boundary_mode`는 `auto`, `open`, `closed`이며 auto는 CAD 체적의 표면 태그를 각 메시 연결 성분과 대조합니다. 열린 CAD의 경계 밖에 생긴 노출 모서리도 차단합니다. 공차의 절대값과 `protected_gap`은 출력 길이 단위입니다. 분리 의도는 Gmsh 표면 태그 쌍으로 명시하며 보고서의 `surface_groups`와 대조하세요. CAD 변경 후 태그를 다시 확인해야 합니다.
+
+확인된 정점–모서리 T-junction, 공유되지 않은 일치 위치, 분리된 정점 fan은 차단합니다. 근접 후보가 모호하거나 탐색 예산이 소진되면 `quality_gate_status: review_required`이고 NAS를 발행하지 않습니다. 일반적인 삼각형 면 교차의 부재를 이 정점–모서리 검사로 보증하지 않으며 해당 범위는 `not_assessed`로 기록합니다.
+
+출력 폴더에 `diagnostic.msh`를 보존하므로 invalid 결과도 Gmsh에서 조사할 수 있습니다. 정상 NAS만 `artifacts.nas`로 기록합니다. NAS 독립 검증에 실패하면 정상 파일을 제거합니다. `assessment.quality_gate_status`와 구조 오류를 반드시 확인하세요. CLI 종료 코드 0/1/2와 기존 UI 계약은 유지됩니다.

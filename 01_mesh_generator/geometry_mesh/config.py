@@ -37,6 +37,12 @@ DEFAULTS: dict[str, Any] = {
                   "boxes": []},
     },
     "export": {"pid_start": 1},
+    "quality": {
+        "max_aspect_ratio": 3.0, "min_angle_deg": 20.0,
+        "topology": {"boundary_mode": "auto", "absolute_tolerance": 0.0,
+                     "relative_tolerance": 1e-10, "protected_gap": None,
+                     "separated_surface_pairs": [], "max_candidate_tests": 2000000},
+    },
 }
 
 
@@ -181,6 +187,34 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unknown export keys: {sorted(unknown_export)}")
     if isinstance(pid_start, bool) or not isinstance(pid_start, int) or pid_start < 1:
         raise ValueError("export.pid_start must be a positive integer")
+    quality = merged["quality"]
+    if not isinstance(quality, dict) or set(quality) - set(DEFAULTS["quality"]):
+        raise ValueError("unknown quality keys")
+    _positive(quality["max_aspect_ratio"], "quality.max_aspect_ratio")
+    _positive(quality["min_angle_deg"], "quality.min_angle_deg")
+    if quality["max_aspect_ratio"] < 1 or quality["max_aspect_ratio"] > 3:
+        raise ValueError("quality.max_aspect_ratio must be between 1 and 3 (no automatic waiver)")
+    if quality["min_angle_deg"] < 20 or quality["min_angle_deg"] > 60:
+        raise ValueError("quality.min_angle_deg must be between 20 and 60")
+    topo = quality["topology"]
+    if not isinstance(topo, dict) or set(topo) - set(DEFAULTS["quality"]["topology"]):
+        raise ValueError("unknown quality.topology keys")
+    if topo["boundary_mode"] not in {"auto", "open", "closed"}:
+        raise ValueError("quality.topology.boundary_mode must be auto, open or closed")
+    _positive(topo["relative_tolerance"], "quality.topology.relative_tolerance")
+    _positive(topo["protected_gap"], "quality.topology.protected_gap", allow_none=True)
+    absolute = topo["absolute_tolerance"]
+    if isinstance(absolute, bool) or not isinstance(absolute, (int, float)) or not math.isfinite(absolute) or absolute < 0:
+        raise ValueError("quality.topology.absolute_tolerance must be finite and nonnegative")
+    budget = topo["max_candidate_tests"]
+    if isinstance(budget, bool) or not isinstance(budget, int) or not 1 <= budget <= 10000000:
+        raise ValueError("quality.topology.max_candidate_tests must be an integer between 1 and 10000000")
+    pairs = topo["separated_surface_pairs"]
+    if not isinstance(pairs, list):
+        raise ValueError("quality.topology.separated_surface_pairs must be a list")
+    for pair in pairs:
+        if not isinstance(pair, list) or len(pair) != 2 or any(isinstance(x, bool) or not isinstance(x, int) or x < 1 for x in pair) or pair[0] == pair[1]:
+            raise ValueError("separated_surface_pairs requires pairs of distinct positive surface tags")
     return merged
 
 

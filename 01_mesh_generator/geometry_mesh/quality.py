@@ -5,6 +5,9 @@ from typing import Any
 
 import numpy as np
 
+from . import config as config_module
+from .topology import inspect as inspect_topology
+
 
 def _percentile(values: np.ndarray, q: float) -> float:
     return float(np.percentile(values, q))
@@ -38,12 +41,17 @@ def _item(score: float | None, metrics: dict[str, Any], rationale: str, problems
     }
 
 
-def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, Any], profile: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = settings or config_module.DEFAULTS["quality"]
     node_ids = mesh["node_ids"]
     coords = mesh["coordinates"]
     conn = mesh["connectivity"]
     eids = mesh["element_ids"]
     idx = np.searchsorted(node_ids, conn)
+    if not len(conn) or np.any(idx >= len(node_ids)) or not np.array_equal(node_ids[idx], conn):
+        raise ValueError("empty mesh or missing connectivity nodes")
+    if len(np.unique(node_ids)) != len(node_ids) or np.any(node_ids <= 0) or np.any(np.diff(node_ids) <= 0):
+        raise ValueError("node IDs must be positive, unique and sorted")
     xyz = coords[idx]
     edge_vectors = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 1], xyz[:, 0] - xyz[:, 2]), axis=1)
     lengths = np.linalg.norm(edge_vectors, axis=2)
@@ -52,16 +60,19 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     finite = bool(np.all(np.isfinite(coords)) and np.all(np.isfinite(areas)))
     zero_mask = areas <= max(geometry["scale"] ** 2 * 1e-24, np.finfo(float).tiny)
 
-    cosines = np.empty((len(conn), 3), dtype=float)
     a, b, c = lengths[:, 0], lengths[:, 1], lengths[:, 2]
     with np.errstate(divide="ignore", invalid="ignore"):
-        cosines[:, 0] = (a * a + c * c - b * b) / (2 * a * c)
-        cosines[:, 1] = (a * a + b * b - c * c) / (2 * a * b)
-        cosines[:, 2] = (b * b + c * c - a * a) / (2 * b * c)
-        angles = np.degrees(np.arccos(np.clip(cosines, -1, 1)))
+        angles = np.stack([np.degrees(np.arctan2(np.linalg.norm(np.cross(xyz[:, (j+1)%3] - xyz[:, j], xyz[:, (j+2)%3] - xyz[:, j]), axis=1),
+                            np.einsum("ij,ij->i", xyz[:, (j+1)%3] - xyz[:, j], xyz[:, (j+2)%3] - xyz[:, j]))) for j in range(3)], axis=1)
         min_angles = np.min(angles, axis=1)
         max_angles = np.max(angles, axis=1)
         quality = 4.0 * math.sqrt(3.0) * areas / np.sum(lengths * lengths, axis=1)
+        aspect = np.max(lengths, axis=1) * np.sum(lengths, axis=1) / (4 * math.sqrt(3) * areas)
+    # Non-finite metrics cannot hide an invalid element or leak NaN into JSON.
+    min_angles = np.nan_to_num(min_angles, nan=0.0)
+    max_angles = np.nan_to_num(max_angles, nan=180.0)
+    quality = np.nan_to_num(quality, nan=0.0)
+    shape_failed = zero_mask | (aspect > settings["max_aspect_ratio"]) | (min_angles < settings["min_angle_deg"]) | ~np.isfinite(aspect)
 
     all_edges = np.concatenate((conn[:, [0, 1]], conn[:, [1, 2]], conn[:, [2, 0]]))
     edge_owner = np.tile(np.arange(len(conn)), 3)
@@ -76,9 +87,14 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     inconsistent_eids = sorted({int(eids[edge_owner[i]]) for group in inconsistent_groups for i in np.flatnonzero(inverse == group)})
     duplicate_rows = len(np.unique(np.sort(conn, axis=1), axis=0)) != len(conn)
     expected_closed = geometry["volume_count"] > 0
+    if finite and not np.any(zero_mask):
+        conformity, conformity_gates = inspect_topology(mesh, geometry, settings["topology"])
+        expected_closed = any(c["expected_closed"] for c in conformity["components"])
+    else:
+        conformity, conformity_gates = {"coverage": "not_assessed", "reason": "invalid coordinates or degenerate triangles", "components": []}, []
 
     shape_cfg = profile["thresholds"]["element_shape"]
-    shape_problems = eids[(min_angles < shape_cfg["problem_min_angle_deg"]) | (quality < shape_cfg["problem_quality"])].astype(int).tolist()
+    shape_problems = eids[shape_failed].astype(int).tolist()
     shape_score = min(
         _score_higher(float(np.nanmin(min_angles)), shape_cfg["min_angle_bad"], shape_cfg["min_angle_good"]),
         _score_higher(_percentile(quality, 1), shape_cfg["quality_q01_bad"], shape_cfg["quality_q01_good"]),
@@ -87,6 +103,17 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
         "minimum_angle_deg": float(np.nanmin(min_angles)), "angle_q01_deg": _percentile(min_angles, 1),
         "maximum_angle_deg": float(np.nanmax(max_angles)), "minimum_mean_ratio": float(np.nanmin(quality)),
         "mean_ratio_q01": _percentile(quality, 1), "mean_ratio_mean": float(np.nanmean(quality)),
+        "aspect_ratio_definition": "Lmax * perimeter / (4 sqrt(3) area)",
+        "aspect_ratio_max": float(np.max(aspect)) if np.all(np.isfinite(aspect)) else None,
+        "aspect_ratio_q99": _percentile(aspect, 99) if np.all(np.isfinite(aspect)) else None,
+        "aspect_ratio_limit": settings["max_aspect_ratio"], "minimum_angle_limit_deg": settings["min_angle_deg"],
+        "violating_element_count": int(np.count_nonzero(shape_failed)),
+        "violating_count_fraction": float(np.mean(shape_failed)),
+        "violating_area_fraction": float(areas[shape_failed].sum() / areas.sum()) if finite and areas.sum() > 0 else None,
+        "automatic_waiver_count": 0,
+        "element_values": [{"element_id": int(eid), "surface_tag": int(surface), "aspect_ratio": float(ar) if np.isfinite(ar) else None,
+                            "minimum_angle_deg": float(angle), "mean_ratio": float(q), "violates": bool(bad)}
+                           for eid, surface, ar, angle, q, bad in zip(eids, mesh["surface_tags"], aspect, min_angles, quality, shape_failed)],
     }
 
     longest = np.max(lengths, axis=1)
@@ -134,12 +161,13 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
         "boundary_edges": boundary_edges, "nonmanifold_edges": len(nonmanifold_groups),
         "inconsistent_orientation_edges": len(inconsistent_groups), "expected_closed": expected_closed,
         "closed_manifold_consistently_oriented": boundary_edges == 0 and not len(nonmanifold_groups) and not len(inconsistent_groups),
+        "conformity": conformity,
     }
     topo_problems = sorted(set(nonmanifold_eids + inconsistent_eids))
     topo_score = 100.0
     if nonmanifold_groups.size or inconsistent_groups.size:
         topo_score = 0.0
-    elif expected_closed and boundary_edges:
+    elif conformity_gates:
         topo_score = 0.0
     elif boundary_edges and geometry["analytic_kind"] not in {"plate", "disk"}:
         topo_score = 70.0
@@ -155,8 +183,9 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
         fatal.append({"code": "nonmanifold_edges", "message": "edges are shared by more than two triangles", "element_ids": nonmanifold_eids})
     if inconsistent_groups.size:
         fatal.append({"code": "inconsistent_normals", "message": "adjacent triangle winding is inconsistent", "element_ids": inconsistent_eids})
-    if expected_closed and boundary_edges:
-        fatal.append({"code": "open_volume_boundary", "message": "a solid geometry produced an open surface mesh"})
+    if np.any(shape_failed):
+        fatal.append({"code": "triangle_shape_limits", "message": "every triangle must satisfy the configured AR and angle limits", "element_ids": shape_problems})
+    fatal.extend(conformity_gates)
 
     scores = {
         "element_shape": _item(shape_score, shape_metrics, "Worst of minimum-angle and lower-tail mean-ratio mappings from the versioned profile.", shape_problems),
@@ -189,7 +218,8 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
         "bbox_min": coords.min(axis=0).tolist(), "bbox_max": coords.max(axis=0).tolist(),
         "element_ids": {"minimum": int(eids.min()), "maximum": int(eids.max())},
     }
-    return {"raw_metrics": raw, "scores": scores, "fatal_gates": fatal}
+    return {"raw_metrics": raw, "scores": scores, "fatal_gates": fatal,
+            "quality_gate_status": "review_required" if any(g["code"] == "conformity_review_required" for g in fatal) else "fail" if fatal else "pass"}
 
 
 def _geometry_fidelity(mesh: dict[str, Any], xyz: np.ndarray, areas: np.ndarray, geometry: dict[str, Any],
@@ -247,3 +277,4 @@ def add_nas_result(assessment: dict[str, Any], result: dict[str, Any]) -> None:
         assessment["scores"]["nas_export_integrity"]["recommendations"] = ["Do not use the NAS file; regenerate it and resolve every independent-reader mismatch."]
     if not result["valid"]:
         assessment["fatal_gates"].append({"code": "nas_export_invalid", "message": result["message"]})
+        assessment["quality_gate_status"] = "fail"
