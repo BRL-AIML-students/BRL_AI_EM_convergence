@@ -78,13 +78,15 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     edge_owner = np.tile(np.arange(len(conn)), 3)
     canonical = np.sort(all_edges, axis=1)
     unique_edges, inverse, counts = np.unique(canonical, axis=0, return_inverse=True, return_counts=True)
+    owner_order = np.argsort(inverse, kind="stable")
+    owner_starts = np.concatenate(([0], np.cumsum(counts)))
     directions = np.where(all_edges[:, 0] < all_edges[:, 1], 1, -1)
     balance = np.bincount(inverse, weights=directions)
     boundary_edges = int(np.count_nonzero(counts == 1))
     nonmanifold_groups = np.flatnonzero(counts > 2)
     inconsistent_groups = np.flatnonzero((counts == 2) & (balance != 0))
-    nonmanifold_eids = sorted({int(eids[edge_owner[i]]) for group in nonmanifold_groups for i in np.flatnonzero(inverse == group)})
-    inconsistent_eids = sorted({int(eids[edge_owner[i]]) for group in inconsistent_groups for i in np.flatnonzero(inverse == group)})
+    nonmanifold_eids = sorted({int(eids[edge_owner[i]]) for group in nonmanifold_groups for i in owner_order[owner_starts[group]:owner_starts[group+1]]})
+    inconsistent_eids = sorted({int(eids[edge_owner[i]]) for group in inconsistent_groups for i in owner_order[owner_starts[group]:owner_starts[group+1]]})
     duplicate_rows = len(np.unique(np.sort(conn, axis=1), axis=0)) != len(conn)
     expected_closed = geometry["volume_count"] > 0
     if finite and not np.any(zero_mask):
@@ -131,8 +133,13 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     characteristic = np.sqrt(areas)
     adjacent_ratios: list[float] = []
     gradation_problems: set[int] = set()
+    degenerate_neighbors = False
     for group in np.flatnonzero(counts == 2):
-        owners = edge_owner[np.flatnonzero(inverse == group)]
+        owners = edge_owner[owner_order[owner_starts[group]:owner_starts[group+1]]]
+        if min(characteristic[owners]) <= 0 or not np.all(np.isfinite(characteristic[owners])):
+            degenerate_neighbors = True
+            gradation_problems.update(map(int, eids[owners]))
+            continue
         ratio = float(max(characteristic[owners]) / min(characteristic[owners]))
         adjacent_ratios.append(ratio)
         if ratio > sizing["growth_assessment_limit"]:
@@ -140,6 +147,8 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     gradation_q99 = _percentile(np.asarray(adjacent_ratios), 99) if adjacent_ratios else 1.0
     growth_bad = max(sizing["growth_assessment_limit"] * 1.75, sizing["growth_assessment_limit"] + 0.5)
     gradation_score = _score_lower(gradation_q99, sizing["growth_assessment_limit"], growth_bad)
+    if degenerate_neighbors:
+        gradation_score = 0.0
     surface_values, surface_counts = np.unique(mesh["surface_tags"], return_counts=True)
     feature_cfg = profile["thresholds"]["gradation_and_features"]
     minimum_surface_triangles = int(surface_counts.min())
@@ -148,7 +157,8 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     for surface in surface_values[surface_counts < feature_cfg["surface_triangles_good"]]:
         gradation_problems.update(map(int, eids[mesh["surface_tags"] == surface]))
     gradation_metrics = {
-        "adjacent_size_ratio_q99": gradation_q99, "adjacent_size_ratio_max": max(adjacent_ratios, default=1.0),
+        "adjacent_size_ratio_q99": gradation_q99, "adjacent_size_ratio_max": None if degenerate_neighbors else max(adjacent_ratios, default=1.0),
+        "has_degenerate_neighbors": degenerate_neighbors,
         "growth_assessment_limit": sizing["growth_assessment_limit"], "small_edge_measure": min((r.get("source_measure") for r in sizing["candidate_rules"] if r["rule"] == "small_edge"), default=None),
         "narrow_gap_detected": sizing["narrow_gap_detected"], "narrow_gap_evidence": sizing["narrow_gap_evidence"], "budget_conflict": sizing["budget_conflict"],
         "post_mesh_budget": sizing["post_mesh_budget"],

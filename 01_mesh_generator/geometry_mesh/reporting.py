@@ -2,15 +2,27 @@ from __future__ import annotations
 
 from html import escape
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 
+def json_safe(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key,item in value.items()}
+    if isinstance(value, (list,tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+
 def write_json(path: Path, report: dict[str, Any]) -> None:
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(json_safe(report), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
 
 
 def write_html(path: Path, report: dict[str, Any]) -> None:
+    report = json_safe(report)
     scores = report["assessment"]["scores"]
     cards = []
     for name, item in scores.items():

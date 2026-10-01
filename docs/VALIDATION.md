@@ -33,3 +33,24 @@ Gmsh 4.15.2, NumPy 1.26.4, pyNastran 1.4.1, uv 0.12.20.
 같은 고정 의존성 환경에서 Python 테스트 **34개 통과**. 추가 사례는 분석식 AR와 스케일 변화, 납작한 요소 차단, 굽은 정합/비정합 접합, 의도적 갭/공차 내 모호 후보, 다른 ID의 일치 위치, 분리된 정점 fan, 열린/닫힌 성분 혼합, 탐색 예산 초과와 NAS 발행 보류를 포함합니다. 기존 CLI·브라우저·CAD·NAS 회귀도 통과했습니다.
 
 임계값의 해석 교정과 MoM 연결은 수행하지 않았으며 사용자 요청 전까지 범위에서 제외합니다. 정점–모서리 기하 검사로 일반적인 삼각형 면 교차 부재를 보증하지 않습니다.
+
+## 개선·Gmsh 기본 UI — 2026-10-01
+
+같은 Windows x64 고정 환경에서 다음 명령을 확인했습니다.
+
+```powershell
+# repository root
+.\.venv\Scripts\python.exe -m pytest -q --tb=short
+node 01_mesh_generator/tests/test_viewer_js.cjs
+
+# 01_mesh_generator
+.\run_gmsh_ui.bat --smoke-test
+```
+
+- Python **43개 통과**: 기존 25개, 품질 게이트 9개, 개선·세션·ONELAB 9개. 기존 CLI·브라우저·기본 형상·CAD·단위·NAS 회귀를 포함합니다.
+- 추가 사례: ONELAB 생성/발행, 수동 노드 변경 뒤 판정 무효화 및 NAS 차단, 치수 변경 시 재생성 요구, diagnostic.msh 재열기, 악화된 개선의 최대 3회 복원, 실제 열린 CAD 공유 경계 fragment와 PID 11/12 보존, cap 충돌 거부, 실제 Relocate2D 개선, 포화된 점수에서 원시 크기 악화 거부, 같은 태그의 CAD 변경 뒤 참조 무효화.
+- 실제 10×10 판의 내부 노드를 인접 노드 방향으로 95% 이동한 사례: 위반 삼각형 **2 → 0**, 최대 AR **21.6764 → 1.2926**, 최소 내각 **1.5742° → 43.3523°**. Relocate2D 한 회차가 채택됐습니다. 한 기하 사례이며 일반 CAD의 성공률을 뜻하지 않습니다.
+- Node.js NAS 파싱 및 파일→canvas 회귀 통과.
+- `run_gmsh_ui.bat --smoke-test`에서 실제 Gmsh FLTK 초기화, ONELAB 생성/검사/발행, UI 업데이트/이벤트 대기, 종료를 확인했습니다. 결과는 `status: complete`와 NAS·MSH·JSON/HTML 보고서였습니다. 생성된 출력은 Git 제외 경로에 보관합니다.
+
+전체 마우스 조작, 모든 CAD 형식/장치, 대형 산업 모델의 시간·메모리는 검증하지 않았습니다. CAD 변경 감지는 경계·OCC 기하 모멘트·물리 그룹 등 관측값을 비교하며 모든 가능한 편집의 완전한 식별을 보장하지 않습니다. 메싱 전후 바뀔 수 있는 OCC bbox를 판정 무효화 근거로 사용하지 않습니다. 일반 삼각형 면 교차·일반 CAD 표면 편차·임의 메시 T-junction 자동 분할은 미평가/미구현입니다. MoM 연결·교정은 제외했습니다. 별도 CI workflow를 추가하지 않았으며 로컬 검사 결과를 CI 통과로 표시하지 않습니다.
