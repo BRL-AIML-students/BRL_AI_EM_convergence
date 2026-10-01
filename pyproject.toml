@@ -1,7 +1,7 @@
 [project]
 name = "brl-ai-em-convergence"
 version = "0.1.0"
-description = "BRL CAD-to-mesh tools and future MoM integration"
+description = "BRL CAD-to-mesh generation, quality inspection and native Gmsh UI"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "gmsh==4.15.2",

@@ -1,12 +1,16 @@
 # BRL 전자기 메시 도구
 
-CAD 형상에서 1차 삼각형 표면 메시를 만들고 NAS 파일과 품질 보고서를 생성하는 도구입니다. 브라우저 UI에서 형상을 설정하고 결과를 확인할 수 있습니다.
+CAD 형상에서 1차 삼각형 표면 메시를 만들고 NAS 파일과 품질 보고서를 생성하는 도구입니다. 브라우저 UI 또는 Gmsh 기본 UI에서 형상을 설정하고 결과를 확인할 수 있습니다.
 
 ## 빠른 시작 (Windows)
 
 Windows x64에서 처음 한 번은 인터넷 연결이 필요합니다. 저장소 루트에서 `setup.bat`을 실행하면 Python 3.12.14와 고정 버전 uv 0.12.20을 준비하고, `uv.lock` 기준으로 의존성을 설치합니다. uv는 같은 버전의 64비트 Python이 있으면 사용하고, 없으면 저장소 내부 `.tools`에 설치합니다. uv 실행 파일과 다운로드 캐시는 저장소의 `.tools`와 `.cache` 아래에 둡니다. 기존 Python 실행 파일을 지정할 경우 PowerShell에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -PythonExecutable 'C:\경로\python.exe'`를 실행합니다. 이 `.venv`는 BRL 전용이며 동료 프로젝트 환경에는 영향을 주지 않습니다.
 
 설치가 끝나면 `01_mesh_generator\run_ui.bat`을 실행하세요. 로컬 브라우저가 열리고, 기본 브라우저에서 형상 입력과 메시 생성 및 결과 확인을 할 수 있습니다. 서버를 끝낼 때는 UI의 종료 버튼을 사용하거나 실행 콘솔에서 Ctrl+C를 누릅니다. 메시 생성 결과와 CAD 입력 파일은 저장소의 Git 제외 경로에 보관됩니다.
+
+Gmsh 기본 UI를 사용하려면 `01_mesh_generator\run_gmsh_ui.bat`을 실행합니다. ONELAB의 BRL 트리에서 형상 숫자 또는 CAD 경로를 입력하고 Action을 선택합니다: **1 생성, 2 검사, 3 개선, 4 발행, 5 종료**. 기본 UI에서 열어 메싱한 모델도 검사할 수 있습니다. 자세한 단위·수동 편집·저장 계약은 [메시 인터페이스](docs/mesh-interface.md#gmsh-기본-ui)에 있습니다.
+
+정상 NAS는 모든 삼각형이 **Verdict형 AR ≤ 3, 최소 내각 ≥ 20°**와 연결·구조 게이트를 통과할 때 발행합니다. 확인된 T-junction은 허용하지 않으며 모호한 근접 후보도 검토 전에는 차단합니다. 실패 결과는 `diagnostic.msh`와 보고서로 조사할 수 있습니다. 이 기준은 기하 운영 정책이며 해석 정확도 보증값이 아닙니다.
 
 의존성 잠금 파일을 갱신한 뒤에는 루트의 `setup.bat`을 다시 실행합니다. 개발 의존성(테스트 도구)까지 설치하려면 PowerShell에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev`를 실행합니다. 저장소 폴더를 이동한 뒤에는 이전 `.venv`를 삭제하고 setup을 다시 실행해야 합니다.
 

@@ -35,6 +35,8 @@ DEFAULTS: dict[str, Any] = {
         "local": {"enabled": True, "feature_threshold_fraction": 0.25,
                   "near_size_fraction": 0.25, "transition_fraction": 0.15,
                   "boxes": []},
+        "improvement": {"enabled": True, "max_passes": 3,
+                        "methods": ["Relocate2D", "Laplace2D"], "fragment_surface_tags": []},
     },
     "export": {"pid_start": 1},
     "quality": {
@@ -188,6 +190,19 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(pid_start, bool) or not isinstance(pid_start, int) or pid_start < 1:
         raise ValueError("export.pid_start must be a positive integer")
     quality = merged["quality"]
+    improvement = mesh["improvement"]
+    if not isinstance(improvement, dict) or set(improvement) - set(DEFAULTS["mesh"]["improvement"]):
+        raise ValueError("unknown mesh.improvement keys")
+    if not isinstance(improvement["enabled"], bool):
+        raise ValueError("mesh.improvement.enabled must be boolean")
+    passes = improvement["max_passes"]
+    if isinstance(passes, bool) or not isinstance(passes, int) or not 0 <= passes <= 3:
+        raise ValueError("mesh.improvement.max_passes must be an integer between 0 and 3")
+    if not isinstance(improvement["methods"], list) or not improvement["methods"] or any(not isinstance(m,str) or m not in {"Relocate2D", "Laplace2D"} for m in improvement["methods"]):
+        raise ValueError("mesh.improvement.methods must contain Relocate2D or Laplace2D")
+    tags = improvement["fragment_surface_tags"]
+    if not isinstance(tags, list) or any(isinstance(t, bool) or not isinstance(t, int) or t <= 0 for t in tags) or len(set(tags)) != len(tags) or len(tags) == 1:
+        raise ValueError("mesh.improvement.fragment_surface_tags requires zero or at least two unique positive surface tags")
     if not isinstance(quality, dict) or set(quality) - set(DEFAULTS["quality"]):
         raise ValueError("unknown quality keys")
     _positive(quality["max_aspect_ratio"], "quality.max_aspect_ratio")
