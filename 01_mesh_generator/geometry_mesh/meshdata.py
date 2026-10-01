@@ -44,4 +44,11 @@ def snapshot(surface_pid: dict[int, int]) -> dict[str, Any]:
     indices = np.searchsorted(node_ids, used)
     if np.any(indices >= len(node_ids)) or not np.array_equal(node_ids[indices], used):
         raise ValueError("triangle connectivity references a missing node")
-    return {"node_ids": used, "coordinates": coordinates[indices], "element_ids": ids, "connectivity": conn, "pids": pid, "surface_tags": surface_tag}
+    cad_edges = []
+    for _, curve in gmsh.model.getEntities(1):
+        types, _, blocks = gmsh.model.mesh.getElements(1, curve)
+        for kind, block in zip(types, blocks):
+            if int(kind) == 1:
+                cad_edges.extend(np.asarray(block, dtype=np.int64).reshape(-1, 2).tolist())
+    return {"node_ids": used, "coordinates": coordinates[indices], "element_ids": ids, "connectivity": conn, "pids": pid, "surface_tags": surface_tag,
+            "cad_boundary_edges": cad_edges}

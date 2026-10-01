@@ -74,10 +74,12 @@ def build(spec: dict[str, Any], length_unit: str, output_unit: str) -> dict[str,
     if not math.isfinite(surface_area) or surface_area <= 0:
         raise ValueError("geometry surface area is zero or invalid")
     volumes = gmsh.model.getEntities(3)
+    closed_surface_tags = sorted({abs(int(tag)) for dim, tag in gmsh.model.getBoundary(volumes, combined=False, oriented=False) if dim == 2}) if volumes else []
     return {
         "root_entities": [[int(d), int(t)] for d, t in roots],
         "surface_count": len(surfaces),
         "volume_count": len(volumes),
+        "closed_surface_tags": closed_surface_tags,
         "bbox_min": list(map(float, bbox[:3])),
         "bbox_max": list(map(float, bbox[3:])),
         "scale": float(scale),

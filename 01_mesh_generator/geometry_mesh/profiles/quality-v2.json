@@ -1,0 +1,36 @@
+{
+  "profile_id": "geometry-surface-quality-v2",
+  "profile_version": "2.0.0",
+  "description": "Independent score mappings with all-element AR/angle and spatial conformity gates. Initial geometric policy; no automatic waiver.",
+  "thresholds": {
+    "element_shape": {
+      "min_angle_good": 30.0,
+      "min_angle_bad": 10.0,
+      "quality_q01_good": 0.7,
+      "quality_q01_bad": 0.2,
+      "problem_min_angle_deg": 20.0,
+      "problem_quality": 0.35
+    },
+    "size_compliance": {
+      "q95_good": 1.25,
+      "q95_bad": 2.0,
+      "problem_ratio": 1.5
+    },
+    "gradation_and_features": {
+      "surface_triangles_good": 4,
+      "surface_triangles_bad": 1
+    },
+    "geometry_fidelity": {
+      "area_relative_good": 0.01,
+      "volume_relative_good": 0.02,
+      "bad_multiple": 5.0
+    }
+  },
+  "policy": {
+    "aspect_ratio_definition": "Lmax * perimeter / (4 sqrt(3) area)",
+    "default_max_aspect_ratio": 3,
+    "default_min_angle_deg": 20,
+    "automatic_waiver_count": 0,
+    "basis": "BRL initial operating policy, not an electromagnetic accuracy guarantee"
+  }
+}
