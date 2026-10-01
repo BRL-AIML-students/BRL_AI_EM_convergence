@@ -26,7 +26,7 @@ Gmsh 기본 UI를 사용하려면 `01_mesh_generator\run_gmsh_ui.bat`을 실행�
 ..\.venv\Scripts\python.exe -m geometry_mesh.cli examples\plate_wave_local.json
 ```
 
-CLI는 결과 위치와 상태를 JSON으로 출력합니다. 프로필 및 NAS 형식은 [메시 인터페이스](docs/mesh-interface.md)를 참고하세요. 생성 기준·종횡비·연결 검사와 참고문헌은 [메시 생성 기준](docs/mesh-generation-guide.md)에 정리되어 있습니다.
+CLI는 결과 위치와 상태를 JSON으로 출력합니다. 프로필 및 NAS 형식은 [메시 인터페이스](docs/mesh-interface.md)를 참고하세요. 생성 기준·종횡비·연결 검사와 참고문헌은 [메시 생성 기준](docs/mesh-generation-guide.html)에 정리되어 있습니다.
 
 ## 개발과 협업
 
