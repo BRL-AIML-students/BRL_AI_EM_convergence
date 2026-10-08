@@ -54,7 +54,7 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
     mesh, assessment = current(context, profile)
     from .naming import resolve
     cfg = deepcopy(cfg)
-    cfg["name"] = resolve(cfg, sizing)
+    cfg["name"] = resolve(cfg, sizing, geometry)
     output_root = Path(cfg["output_dir"]).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     prefix = "run" if cfg["naming"]["automatic"] else cfg["name"]

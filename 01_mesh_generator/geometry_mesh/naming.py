@@ -21,9 +21,11 @@ def source_name(cfg: dict) -> str:
     return (cleaned or "geometry")[:48]
 
 
-def resolve(cfg: dict, sizing: dict) -> str:
+def resolve(cfg: dict, sizing: dict, geometry_info: dict | None = None) -> str:
     if not cfg["naming"]["automatic"]:
         return cfg["name"]
+    if geometry_info and geometry_info["source_kind"] == "native_current_model":
+        cfg = {**cfg, "geometry": {"kind": "native_current_model"}}
     node = cfg["geometry"]
     labels = {"plate": (("length", "L"), ("width", "W")), "disk": (("radius", "R"),),
               "sphere": (("radius", "R"),), "box": (("length", "L"), ("width", "W"), ("height", "H")),
@@ -33,7 +35,10 @@ def resolve(cfg: dict, sizing: dict) -> str:
         parts.extend(label + number(node["parameters"][key]) for key, label in labels[node["kind"]])
         parts.append(cfg["length_unit"])
     unit = cfg["output_unit"]
-    parts.extend(("hMin" + number(sizing["minimum_size"]) + unit, "hMax" + number(sizing["target_size"]) + unit))
+    if geometry_info and geometry_info["source_kind"] == "native_current_model":
+        parts.extend(("hMinNA", "hMaxNA"))
+    else:
+        parts.extend(("hMin" + number(sizing["minimum_size"]) + unit, "hMax" + number(sizing["target_size"]) + unit))
     wave = cfg["mesh"]["wave"]
     if wave["frequency_hz"] is not None:
         parts.extend(("f" + number(wave["frequency_hz"] / 1e9) + "GHz", "N" + number(wave["elements_per_wavelength"])))

@@ -41,6 +41,15 @@ def parameters(configuration: dict) -> list[dict]:
             number("Output/Automatic name",int(cfg["naming"]["automatic"]),0,1,[0,1]),
             string("Output/Case",cfg["naming"]["case"]),
             string("Result/NAS name","",readonly=True),
+            number("Mesh/Controlled comparison",int(cfg["mesh"]["controlled"]),0,1,[0,1]),
+            number("Mesh/Minimum size",cfg["mesh"]["minimum_size"] if cfg["mesh"]["minimum_size"] is not None else .1),
+            number("Mesh/Minimum fraction",cfg["mesh"]["minimum_size_fraction"],1e-12),
+            number("Wave/Enabled",int(cfg["mesh"]["wave"]["enabled"]),0,1,[0,1]),
+            number("Wave/Frequency GHz",(cfg["mesh"]["wave"]["frequency_hz"] or 1e10)/1e9,1e-12),
+            number("Wave/Elements per wavelength",cfg["mesh"]["wave"]["elements_per_wavelength"],1e-12),
+            number("Wave/Relative permittivity",cfg["mesh"]["wave"]["relative_permittivity"],1e-12),
+            number("Wave/Relative permeability",cfg["mesh"]["wave"]["relative_permeability"],1e-12),
+            number("Result/hMin",0,readonly=True),number("Result/hMax",0,readonly=True),
             number("Mesh/Scale fraction",cfg["mesh"]["scale_fraction"],1e-6,1),
             number("Mesh/Fixed size (0 auto)",cfg["mesh"]["target_size"] or 0),
             number("Quality/Maximum AR",cfg["quality"]["max_aspect_ratio"],1,3),
@@ -81,6 +90,8 @@ def read_configuration(base: dict) -> dict:
     cfg["naming"].update(automatic=bool(number("Output/Automatic name")),case=string("Output/Case"))
     fixed=number("Mesh/Fixed size (0 auto)")
     cfg["mesh"].update(mode="fixed" if fixed>0 else "auto",target_size=fixed or None,scale_fraction=number("Mesh/Scale fraction"))
+    cfg["mesh"].update(controlled=bool(number("Mesh/Controlled comparison")),minimum_size=number("Mesh/Minimum size"),minimum_size_fraction=number("Mesh/Minimum fraction"))
+    cfg["mesh"]["wave"].update(enabled=bool(number("Wave/Enabled")),frequency_hz=number("Wave/Frequency GHz")*1e9,elements_per_wavelength=number("Wave/Elements per wavelength"),relative_permittivity=number("Wave/Relative permittivity"),relative_permeability=number("Wave/Relative permeability"))
     cfg["quality"].update(max_aspect_ratio=number("Quality/Maximum AR"),min_angle_deg=number("Quality/Minimum angle"))
     cfg["quality"]["topology"].update(absolute_tolerance=number("Quality/Absolute tolerance"),relative_tolerance=number("Quality/Relative tolerance"),
                                       protected_gap=number("Quality/Protected gap (0 unspecified)") or None,boundary_mode=string("Quality/Boundary mode"))
@@ -152,6 +163,8 @@ class Controller:
                 mesh,assessment,self.history=improve(self.context,_profile())
             else:
                 mesh,assessment=current(self.context,_profile())
+        gmsh.onelab.setNumber("BRL/Result/hMin",[self.context.sizing.get("minimum_size", -1)])
+        gmsh.onelab.setNumber("BRL/Result/hMax",[self.context.sizing["target_size"]])
         display(mesh,assessment)
         self.last_fingerprint=fingerprint(mesh)
         if action==4:
