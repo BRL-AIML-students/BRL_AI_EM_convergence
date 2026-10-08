@@ -9,6 +9,8 @@ import platform
 import shutil
 import tempfile
 import uuid
+import time
+import subprocess
 from typing import Any, Callable
 
 import gmsh
@@ -23,6 +25,19 @@ from .reporting import write_html, write_json, json_safe
 def _profile() -> dict[str, Any]:
     path = Path(__file__).parent / "profiles" / "quality-v2.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def code_state() -> dict:
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
+                                capture_output=True, text=True, timeout=5,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
+                               capture_output=True, text=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"code_commit": result.stdout.strip() if result.returncode == 0 else None,
+                "code_dirty": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
+    except (OSError, subprocess.TimeoutExpired):
+        return {"code_commit": None, "code_dirty": None}
 
 
 def initialize() -> None:
@@ -42,7 +57,7 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
     mesh, assessment = current(context, profile)
     from .naming import resolve
     cfg = deepcopy(cfg)
-    cfg["name"] = resolve(cfg, sizing)
+    cfg["name"] = resolve(cfg, sizing, geometry)
     output_root = Path(cfg["output_dir"]).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     prefix = "run" if cfg["naming"]["automatic"] else cfg["name"]
@@ -102,7 +117,7 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
             "geometry": geometry, "sizing": sizing, "surface_groups": groups,
             "assessment": assessment, "score_profile": profile, "improvement_history": improvement_history or [],
             "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "diagnostic_mesh": "diagnostic.msh", "report_json": "report.json", "quality_html": "quality_report.html"},
-            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False},
+            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False, **code_state()},
             "limitations": [
                 "Imported CAD, native opened models and boolean CSG geometry fidelity are not assessed because no robust analytic reference or trimmed-surface projection audit is implemented.",
                 "General triangle-face intersections are not assessed by the vertex-edge conformity audit.",
@@ -132,9 +147,13 @@ def run(configuration: dict[str, Any], progress: Callable[[str], None] | None = 
     initialize()
     try:
         emit("generating first-order triangular surface mesh")
+        started = time.perf_counter()
         context = prepare(cfg)
         generate(context)
+        mesh_seconds = time.perf_counter() - started
+        started = time.perf_counter()
         _, _, history = improve(context, _profile())
+        context.sizing["timings"] = {"geometry_and_mesh_seconds": mesh_seconds, "improvement_seconds": time.perf_counter() - started}
         report = publish_current(context, history)
         emit(f"published atomic output: {report['output_directory']}")
         return report

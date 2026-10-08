@@ -2,11 +2,13 @@ from pathlib import Path
 import json
 
 from geometry_mesh.config import validate
-from geometry_mesh.naming import resolve
+from geometry_mesh.naming import resolve, number
 from geometry_mesh.pipeline import run
 
 
 def test_readable_units_case_and_legacy_name():
+    assert number(4.0000000224) == "4"
+    assert number(.02500000014) == "0p025"
     cfg = validate({"geometry": {"kind": "ogive", "parameters": {"D": 110, "L": 200, "t": .5}}, "length_unit": "mm", "output_unit": "m", "naming": {"case": "noWave"}, "mesh": {"wave": {"frequency_hz": 9.5e9}}})
     name = resolve(cfg, {"minimum_size": .001, "target_size": .003})
     assert name == "ogive_D110_L200_t0p5_mm_hMin0p001m_hMax0p003m_f9p5GHz_N10_noWave"

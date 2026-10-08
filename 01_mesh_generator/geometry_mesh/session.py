@@ -185,6 +185,8 @@ def improve(context: Context, profile: dict) -> tuple[dict, dict, list]:
     mesh, assessment = current(context, profile)
     settings = context.configuration["mesh"]["improvement"]
     history = []
+    if context.sizing.get("controlled", False):
+        return mesh, assessment, history
     if not settings["enabled"] or _nonshape_gates(assessment):
         return mesh, assessment, history
     for i in range(settings["max_passes"]):

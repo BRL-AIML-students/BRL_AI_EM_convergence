@@ -9,6 +9,47 @@ import gmsh
 METRES_PER_UNIT = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6}
 C0 = 299_792_458.0
 
+CONTROLLED_OPTIONS = {
+    "Mesh.MeshSizeFromCurvature": 0, "Mesh.MeshSizeFromPoints": 1,
+    "Mesh.MeshSizeExtendFromBoundary": 1, "Mesh.Algorithm": 6,
+    "Mesh.ElementOrder": 1, "Mesh.RecombineAll": 0,
+    "Mesh.Smoothing": 1, "Mesh.Optimize": 1,
+}
+
+
+def _controlled_plan(geometry: dict, settings: dict) -> dict:
+    scale = geometry["scale"]
+    automatic = settings["mode"] == "auto"
+    low = scale * settings["minimum_size_fraction"] if automatic else settings["minimum_size"]
+    high = scale * settings["scale_fraction"] if automatic else settings["target_size"]
+    rules = [{"rule": "automatic_bounds" if automatic else "manual_bounds", "minimum_size": low, "candidate_size": high}]
+    wave = settings["wave"]
+    details = {"enabled": wave["enabled"]}
+    if wave["enabled"]:
+        wavelength = C0 / (wave["frequency_hz"] * math.sqrt(wave["relative_permittivity"] * wave["relative_permeability"])) / METRES_PER_UNIT[geometry["output_unit"]]
+        limit = wavelength / wave["elements_per_wavelength"]
+        details.update(frequency_hz=wave["frequency_hz"], wavelength_output_units=wavelength,
+                       size_limit_output_units=limit, elements_per_wavelength=wave["elements_per_wavelength"],
+                       relative_permittivity=wave["relative_permittivity"], relative_permeability=wave["relative_permeability"],
+                       minimum_adjusted_for_wave=low > limit,
+                       assumption="homogeneous lossless medium; phase wavelength only")
+        high, low = min(high, limit), min(low, limit)
+        rules.append({"rule": "wavelength", "candidate_size": limit})
+    return {
+        "controlled": True, "automatic_bounds": automatic, "model_scale": scale,
+        "minimum_size": low, "target_size": high, "user_size_cap": None,
+        "chord_tolerance": scale * settings["chord_tolerance_fraction"], "curvature_samples_per_circle": 0,
+        "growth_assessment_limit": settings["growth_assessment_limit"],
+        "estimated_elements": max(1, math.ceil(geometry["surface_area"] / (math.sqrt(3) * high * high / 4))),
+        "element_budget": None, "budget_conflict": None, "narrow_gap_detected": None,
+        "narrow_gap_evidence": {"coverage": "not_assessed", "reason": "controlled mode excludes gap sizing"},
+        "candidate_rules": rules, "wave": details,
+        "local": {"enabled": False, "curve_tags": [], "surface_tags": [], "excluded_seam_curve_tags": [],
+                  "smallest_feature": None, "near_size_fraction": settings["local"]["near_size_fraction"],
+                  "transition_distance": 0, "boxes": [], "fields_applied": []},
+        "excluded_controls": ["curvature", "small_features", "local_fields", "box_fields", "narrow_gap", "budget", "post_mesh_improvement"],
+    }
+
 
 def _bbox_distance(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return math.sqrt(sum(max(0.0, a[i] - b[i + 3], b[i] - a[i + 3]) ** 2 for i in range(3)))
@@ -43,6 +84,8 @@ def _seam_curve_tags() -> set[int]:
 
 
 def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    if settings["controlled"]:
+        return _controlled_plan(geometry, settings)
     scale = geometry["scale"]
     seam_curve_tags = _seam_curve_tags()
     lengths = []
@@ -74,7 +117,7 @@ def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
         gap_size = gap / settings["narrow_gap"]["divisions"]
         feature = min(feature, gap_size) if feature is not None else gap_size
         reasons.append({"rule": "narrow_gap_bbox", "source_measure": gap, "candidate_size": gap_size})
-    floor = scale * settings["minimum_size_fraction"]
+    floor = settings["minimum_size"] if settings["minimum_size"] is not None else scale * settings["minimum_size_fraction"]
     local = settings["local"]
     requested = min(base, feature) if feature is not None and not local["enabled"] else base
     cap = settings["user_size_cap"]
@@ -150,6 +193,11 @@ def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
 def apply(sizing: dict[str, Any]) -> None:
     gmsh.option.setNumber("Mesh.MeshSizeMin", sizing["minimum_size"])
     gmsh.option.setNumber("Mesh.MeshSizeMax", sizing["target_size"])
+    if sizing.get("controlled", False):
+        for option, value in CONTROLLED_OPTIONS.items():
+            gmsh.option.setNumber(option, value)
+        sizing["applied_options"] = {**CONTROLLED_OPTIONS, "Mesh.MeshSizeMin": sizing["minimum_size"], "Mesh.MeshSizeMax": sizing["target_size"]}
+        return
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", sizing["curvature_samples_per_circle"])
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 1)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)

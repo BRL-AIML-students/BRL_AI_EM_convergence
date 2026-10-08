@@ -242,6 +242,17 @@
               }
             }
           }
+        },
+        "controlled": {
+          "type": "boolean",
+          "default": false
+        },
+        "minimum_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
         }
       }
     },

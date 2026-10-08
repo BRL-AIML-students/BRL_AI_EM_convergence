@@ -39,6 +39,7 @@ def absolute_cad_paths(node: dict) -> None:
 @dataclass
 class Job:
     id: str
+    comparison: bool = False
     state: str = "running"
     status: str = ""
     error: str = ""
@@ -46,10 +47,11 @@ class Job:
     stderr: str = ""
     output_directory: str = ""
     nas_path: Path | None = None
+    case_paths: dict[str, Path] = field(default_factory=dict)
     report: dict = field(default_factory=dict)
 
     def public(self) -> dict:
-        return {"id": self.id, "state": self.state, "status": self.status,
+        return {"id": self.id, "comparison": self.comparison, "state": self.state, "status": self.status,
                 "error": self.error, "stdout": self.stdout[-4000:],
                 "stderr": self.stderr[-4000:], "output_directory": self.output_directory,
                 "report": self.report}
@@ -96,13 +98,13 @@ class AppServer(ThreadingHTTPServer):
             import shutil
             shutil.rmtree(self.work_dir, ignore_errors=True)
 
-    def start_job(self, config: dict) -> Job:
+    def start_job(self, config: dict, comparison: bool = False) -> Job:
         with self.lock:
             if self.closing:
                 raise RuntimeError("The UI server is shutting down.")
             if self.active is not None:
                 raise RuntimeError("A mesh generation is already running.")
-            job = Job(uuid.uuid4().hex)
+            job = Job(uuid.uuid4().hex, comparison=comparison)
             self.jobs[job.id] = job
             self.active = job.id
             thread = threading.Thread(target=self._run_job, args=(job, config), daemon=True)
@@ -118,7 +120,7 @@ class AppServer(ThreadingHTTPServer):
                     raise RuntimeError("The UI server shut down before generation started.")
                 config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "geometry_mesh.cli", str(config_path), "--quiet"],
+                    [sys.executable, "-m", "geometry_mesh.cli", str(config_path), "--quiet"] + (["--compare"] if job.comparison else []),
                     cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, encoding="utf-8", errors="replace", shell=False,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -134,6 +136,17 @@ class AppServer(ThreadingHTTPServer):
                 raise RuntimeError(job.stderr.strip() or f"Generator exited with code {proc.returncode}.")
             record = json.loads(job.stdout)
             output = Path(record["output_directory"]).resolve()
+            if job.comparison:
+                job.report = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
+                job.output_directory, job.status = str(output), str(record["status"])
+                for case in job.report["cases"]:
+                    if case["status"] == "complete" and case["nas"]:
+                        candidate = Path(case["output_directory"]) / case["nas"]
+                        if candidate.is_file() and candidate.stat().st_size <= MAX_NAS_BYTES:
+                            job.case_paths[case["case"]] = candidate
+                job.nas_path = job.case_paths.get("combined") or next(iter(job.case_paths.values()), None)
+                job.state = "complete"
+                return
             report_path = output / "report.json"
             if not report_path.is_file():
                 raise RuntimeError("Generation finished without report.json.")
@@ -212,7 +225,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._valid_host():
             self._json(403, {"error": "Invalid host."})
             return
-        path = urlsplit(self.path).path
+        parsed = urlsplit(self.path)
+        path = parsed.path
         if path == "/":
             html = PAGE.read_text(encoding="utf-8").replace("__SESSION_TOKEN__", self.server.token)
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
@@ -223,8 +237,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, job.public()) if job else self._json(404, {"error": "Job not found."})
         elif path.startswith("/api/results/") and self._authorized():
             job = self.server.jobs.get(path.removeprefix("/api/results/"))
-            if job and job.state == "complete" and job.nas_path and job.nas_path.is_file():
-                self._send(200, job.nas_path.read_bytes(), "text/plain; charset=utf-8")
+            case = parse_qs(parsed.query).get("case", [None])[0]
+            nas_path = (job.case_paths.get(case) if case is not None else job.nas_path) if job else None
+            if job and job.state == "complete" and nas_path and nas_path.is_file():
+                self._send(200, nas_path.read_bytes(), "text/plain; charset=utf-8")
             else:
                 self._json(404, {"error": "NAS result is unavailable."})
         else:
@@ -246,13 +262,17 @@ class Handler(BaseHTTPRequestHandler):
                 upload.write_bytes(data)
                 self.server.cad_names[str(upload)] = Path(filename.replace("\\", "/")).name
                 self._json(200, {"path": str(upload), "name": Path(filename).name})
-            elif path.path == "/api/jobs":
+            elif path.path in {"/api/jobs", "/api/comparisons"}:
                 config = json.loads(self._body(MAX_JSON_BYTES))
                 if not isinstance(config, dict):
                     raise ValueError("Configuration must be an object.")
                 if isinstance(config.get("geometry"), dict):
                     absolute_cad_paths(config["geometry"])
                 config = validate(config)
+                comparison = path.path == "/api/comparisons"
+                if comparison:
+                    from geometry_mesh.comparison import configurations
+                    configurations(config)
                 geometry = config["geometry"]
                 if geometry["kind"] == "cad" and config["naming"]["source_name"] is None:
                     config["naming"]["source_name"] = self.server.cad_names.get(geometry["path"])
@@ -262,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
                 output = output.resolve()
                 output.mkdir(parents=True, exist_ok=True)
                 config["output_dir"] = str(output)
-                job = self.server.start_job(config)
+                job = self.server.start_job(config, comparison=comparison)
                 self._json(202, job.public())
             elif path.path == "/api/shutdown":
                 if self.server.active:

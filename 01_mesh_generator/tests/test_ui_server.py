@@ -101,6 +101,25 @@ def test_server_uses_report_automatic_name(tmp_path: Path):
         assert (Path(job["output_directory"]) / job["report"]["artifacts"]["nas"]).read_bytes() == nas
 
 
+def test_server_comparison_serves_only_selected_valid_case(tmp_path: Path):
+    cfg = config(tmp_path / "comparison")
+    cfg["mesh"].update(minimum_size=.1, target_size=2, scale_fraction=.2)
+    with running_server(tmp_path) as server:
+        code, data = request(server, "/api/comparisons", method="POST", body=cfg)
+        assert code == 202, data
+        job = wait_for_job(server, json.loads(data)["id"])
+        assert job["state"] == "complete", job
+        assert len(job["report"]["cases"]) == 4
+        for case in job["report"]["cases"]:
+            code, nas = request(server, "/api/results/" + job["id"] + "?case=" + case["case"])
+            if case["status"] == "complete":
+                assert code == 200 and b"CTRIA3" in nas
+            else:
+                assert code == 404
+        code, _ = request(server, "/api/results/" + job["id"] + "?case=unknown")
+        assert code == 404
+
+
 def test_server_rejects_invalid_requests_and_reports_worker_error(tmp_path: Path, monkeypatch):
     with running_server(tmp_path) as server:
         code, _ = request(server, "/api/jobs", method="POST", body=config(tmp_path / "results"), token=False)

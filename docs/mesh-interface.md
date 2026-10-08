@@ -149,3 +149,21 @@ File/Open 등 기존 모델은 `session.adopt_current(configuration)`으로 채�
 ## 자동 NAS 이름
 
 `naming.automatic=true`는 형상명/원본명, 입력 치수·단위, 최종 `hMin`·`hMax`와 출력 단위, 주파수 `f`(GHz)·파장당 요소 수 `N`, 선택적 `naming.case`를 연결합니다. configID는 사용하지 않습니다. 소수점은 `p`로 표기하고 case는 마지막에 붙입니다. 기준 사례는 빈 case입니다. 외부 CAD는 `naming.source_name`에 원본 파일명을 지정할 수 있고 UI 업로드는 이를 보존합니다. 전체 설정은 report.json에 기록하고 반복 실행은 별도 run 폴더에 보관합니다. hMin/hMax는 Gmsh 제어값이며 실제 edge 길이의 보증 범위가 아닙니다. 기존 JSON에 name이 있고 naming이 없으면 수동 이름을 유지합니다.
+
+## 파장·크기 비교 실험
+
+브라우저 UI에서 `파장·크기만 비교하는 조건 사용`을 켜면 `mesh.controlled=true`로 실행합니다. 파장 ON/OFF와 최소·최대 크기 자동 계산 ON/OFF를 선택할 수 있습니다. 자동 계산은 bounding box 대각선 길이에 scale_fraction / minimum_size_fraction을 곱해 hMax / hMin을 정합니다. 자동 OFF는 출력 단위의 수동 hMin(minimum_size), hMax(target_size)를 사용합니다. 파장 ON은 균질·무손실 매질의 파장 / N으로 상한을 제한하며 hMin이 이보다 크면 함께 줄이고 이를 보고서에 기록합니다.
+
+비교 조건은 Mesh.Algorithm=6, Mesh.Smoothing=1, 곡률 제어=0, point·boundary 크기 전달=1, 1차 삼각형으로 고정합니다. 작은 특징·국소/Box field·narrowGap·element budget·추가 Relocate2D/Laplace2D 개선을 적용하지 않습니다. 실제 applied_options, candidate_rules, 제외된 제어, 생성 시간, code_commit/code_dirty를 보고서에 기록합니다. 비교 조건 OFF는 기존 경로를 사용하므로 기능별 순수 비교로 해석하지 않습니다.
+
+`4개 사례 일괄 생성`은 현재 형상·단위·주파수·재료를 유지해 baseline(수동/OFF), waveOnly(수동/ON), autoSizeOnly(자동/OFF), combined(자동/ON)을 생성합니다. combined의 파일명 suffix는 생략합니다. 자동 ON 상태에서도 수동 hMin/hMax가 baseline에 필요합니다. CLI는 다음과 같습니다(01_mesh_generator에서 실행).
+
+```powershell
+..\.venv\Scripts\python.exe -m geometry_mesh.cli examples\plate_comparison.json --compare
+```
+
+UI 서버는 POST /api/comparisons로 일괄 생성을 받고 GET /api/results/<job>?case=<case>로 선택한 정상 NAS를 반환합니다. 일반 생성은 기존 POST /api/jobs를 사용합니다. 일괄 폴더의 comparison.json에는 사례별 상태·경로·NAS·최종 크기·triangle 수·적용 옵션·시간·환경과 실패 원인이 저장됩니다. 품질 실패 시 해당 NAS는 발행하지 않고 diagnostic.msh와 보고서를 남기며 다른 사례는 계속 생성합니다. 일부 실패는 partial 상태와 CLI exit code 2로 표시합니다. 중단된 일괄 작업의 manifest는 running 상태와 완료 사례를 보존합니다.
+
+파일명은 가독성을 위해 최대 8 유효 숫자로 표시하며 정확한 전체 수치는 report.json에 기록합니다. Gmsh에서 외부 모델을 직접 열어 채택한 경우 생성 크기 이력을 추정하지 않고 자동 이름에 native_current_model_hMinNA_hMaxNA를 표시합니다.
+
+일괄 비교는 mesh 생성 검증이며 MoM 정확도 검증을 수행하지 않습니다. MoM 연결 전에 단위·PID·normal·열린 경계/재료·formulation·basis·입사 조건·solver tolerance를 확인해야 합니다. 비교 실험에서는 이 조건을 고정하고 기준해 또는 세분화 수렴 결과에 대해 관측량 오차·unknown 수·시간·메모리를 비교합니다. ogive의 입력 t는 재료 정보를 대신하지 않습니다.

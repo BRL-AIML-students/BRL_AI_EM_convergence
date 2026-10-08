@@ -54,3 +54,15 @@ node 01_mesh_generator/tests/test_viewer_js.cjs
 - `run_gmsh_ui.bat --smoke-test`에서 실제 Gmsh FLTK 초기화, ONELAB 생성/검사/발행, UI 업데이트/이벤트 대기, 종료를 확인했습니다. 결과는 `status: complete`와 NAS·MSH·JSON/HTML 보고서였습니다. 생성된 출력은 Git 제외 경로에 보관합니다.
 
 전체 마우스 조작, 모든 CAD 형식/장치, 대형 산업 모델의 시간·메모리는 검증하지 않았습니다. CAD 변경 감지는 경계·OCC 기하 모멘트·물리 그룹 등 관측값을 비교하며 모든 가능한 편집의 완전한 식별을 보장하지 않습니다. 메싱 전후 바뀔 수 있는 OCC bbox를 판정 무효화 근거로 사용하지 않습니다. 일반 삼각형 면 교차·일반 CAD 표면 편차·임의 메시 T-junction 자동 분할은 미평가/미구현입니다. MoM 연결·교정은 제외했습니다. 별도 CI workflow를 추가하지 않았으며 로컬 검사 결과를 CI 통과로 표시하지 않습니다.
+
+## ogive·자동 이름·파장/크기 비교 — 2026-10-08
+
+Windows x64, Python 3.12.14, Gmsh 4.15.2 환경에서 ogive t=0/3의 기존 OCC 면적·체적, 단위 변환·원점, STEP 미생성과 CLI/ONELAB 연결을 검증했습니다. 자동 이름은 형상 치수, 최종 hMin/hMax, f/N과 선택적 case를 표시하고 수동 이름·CAD 원본명을 보존합니다.
+
+비교 모드의 manual/auto × wave OFF/ON 네 사례를 실제 생성해 최소·최대 크기만 달라지고 알고리즘·곡률·smoothing·국소 field·추가 개선 조건은 고정되는지 확인했습니다. 실제 UI의 40×30 mm plate, 수동 hMin=0.1 mm/hMax=6 mm, 자동 scale_fraction=0.08, f=10 GHz/N=10에서 baseline/waveOnly/autoSizeOnly/combined는 triangle 120/342/196/342개로 모두 NAS를 발행했고 뷰어의 사례 전환을 확인했습니다. 이는 한 설정의 생성 검증이며 정확도나 속도 향상을 입증하지 않습니다.
+
+전체 Python 테스트 68개 통과, Node.js NAS 파서·canvas 회귀 및 UI script 구문 검사를 수행했습니다. 로컬 HTTP 테스트는 Windows sandbox의 loopback 제한으로 sandbox 밖에서 실행했습니다. 파일명 단계의 인증 거부 테스트 1개는 Windows 연결 중단 후 재실행해 통과했고 비교 단계 전체 실행은 통과했습니다. GitHub CI 검증으로 표시하지 않습니다.
+
+품질 게이트는 비교에서도 유지합니다. 실패 사례는 NAS 없이 보고서/diagnostic.msh를 보존하고 batch는 계속합니다. 외부에서 직접 연 native 모델은 생성 크기 이력을 추정하지 않습니다. MoM 연결과 해석 오차·수렴·unknown 비용 검증은 수행하지 않았습니다.
+
+실제 브라우저의 ogive D=110,L=200,t=3 mm, scale_fraction=0.06, minimum_size_fraction=0.0005, f=10 GHz/N=10 비교 조건에서 노드 12,558개·triangle 25,112개·PID 5개의 NAS가 정상 발행됐고 형상 표시를 확인했습니다. 이 설정의 품질 게이트 통과이며 MoM 정확도 근거는 아닙니다.
