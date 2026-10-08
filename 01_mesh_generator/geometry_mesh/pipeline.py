@@ -27,14 +27,17 @@ def _profile() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def code_revision() -> str | None:
+def code_state() -> dict:
     try:
         result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
                                 capture_output=True, text=True, timeout=5,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return result.stdout.strip() if result.returncode == 0 else None
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
+                               capture_output=True, text=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"code_commit": result.stdout.strip() if result.returncode == 0 else None,
+                "code_dirty": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return {"code_commit": None, "code_dirty": None}
 
 
 def initialize() -> None:
@@ -114,7 +117,7 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
             "geometry": geometry, "sizing": sizing, "surface_groups": groups,
             "assessment": assessment, "score_profile": profile, "improvement_history": improvement_history or [],
             "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "diagnostic_mesh": "diagnostic.msh", "report_json": "report.json", "quality_html": "quality_report.html"},
-            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False, "code_commit": code_revision()},
+            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False, **code_state()},
             "limitations": [
                 "Imported CAD, native opened models and boolean CSG geometry fidelity are not assessed because no robust analytic reference or trimmed-surface projection audit is implemented.",
                 "General triangle-face intersections are not assessed by the vertex-edge conformity audit.",

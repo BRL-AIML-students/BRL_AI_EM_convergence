@@ -117,7 +117,7 @@ def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
         gap_size = gap / settings["narrow_gap"]["divisions"]
         feature = min(feature, gap_size) if feature is not None else gap_size
         reasons.append({"rule": "narrow_gap_bbox", "source_measure": gap, "candidate_size": gap_size})
-    floor = scale * settings["minimum_size_fraction"]
+    floor = settings["minimum_size"] if settings["minimum_size"] is not None else scale * settings["minimum_size_fraction"]
     local = settings["local"]
     requested = min(base, feature) if feature is not None and not local["enabled"] else base
     cap = settings["user_size_cap"]

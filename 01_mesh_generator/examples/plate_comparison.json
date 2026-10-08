@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "plate_comparison",
+  "naming": {
+    "automatic": true
+  },
+  "output_dir": "outputs",
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "geometry": {
+    "kind": "plate",
+    "parameters": {
+      "length": 40,
+      "width": 30
+    }
+  },
+  "mesh": {
+    "controlled": true,
+    "mode": "auto",
+    "minimum_size": 0.1,
+    "target_size": 6,
+    "scale_fraction": 0.08,
+    "minimum_size_fraction": 0.001,
+    "wave": {
+      "enabled": true,
+      "frequency_hz": 10000000000.0,
+      "elements_per_wavelength": 10,
+      "relative_permittivity": 1,
+      "relative_permeability": 1
+    }
+  }
+}

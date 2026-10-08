@@ -180,8 +180,8 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("minimum_size must not exceed target_size")
         if mesh["mode"] == "auto" and mesh["minimum_size_fraction"] > mesh["scale_fraction"]:
             raise ValueError("minimum_size_fraction must not exceed scale_fraction")
-        if mesh["element_budget"] is not None or mesh["user_size_cap"] is not None or mesh["improvement"]["fragment_surface_tags"]:
-            raise ValueError("controlled mode excludes element_budget, user_size_cap and fragment_surface_tags")
+        if mesh["element_budget"] is not None or mesh["user_size_cap"] is not None:
+            raise ValueError("controlled mode excludes element_budget and user_size_cap")
     if mesh["budget_policy"] not in {"respect_features", "respect_budget"}:
         raise ValueError("mesh.budget_policy must be respect_features or respect_budget")
     if mesh["element_budget"] is not None:
@@ -244,6 +244,8 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(improvement["methods"], list) or not improvement["methods"] or any(not isinstance(m,str) or m not in {"Relocate2D", "Laplace2D"} for m in improvement["methods"]):
         raise ValueError("mesh.improvement.methods must contain Relocate2D or Laplace2D")
     tags = improvement["fragment_surface_tags"]
+    if mesh["controlled"] and tags:
+        raise ValueError("controlled mode excludes fragment_surface_tags")
     if not isinstance(tags, list) or any(isinstance(t, bool) or not isinstance(t, int) or t <= 0 for t in tags) or len(set(tags)) != len(tags) or len(tags) == 1:
         raise ValueError("mesh.improvement.fragment_surface_tags requires zero or at least two unique positive surface tags")
     if not isinstance(quality, dict) or set(quality) - set(DEFAULTS["quality"]):

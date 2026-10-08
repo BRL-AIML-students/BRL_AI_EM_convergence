@@ -6,7 +6,7 @@ import re
 
 
 def number(value: float) -> str:
-    return format(float(value), ".12g").replace(".", "p").replace("-", "m").replace("+", "")
+    return format(float(value), ".8g").replace(".", "p").replace("-", "m").replace("+", "")
 
 
 def source_name(cfg: dict) -> str:
