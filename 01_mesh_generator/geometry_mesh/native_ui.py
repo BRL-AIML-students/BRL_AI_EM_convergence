@@ -38,6 +38,9 @@ def parameters(configuration: dict) -> list[dict]:
             string("Units/Input",cfg["length_unit"],["m","cm","mm","um"]),
             string("Units/Output",cfg["output_unit"],["m","cm","mm","um"]),
             string("Output/Name",cfg["name"]),string("Output/Folder",cfg["output_dir"]),
+            number("Output/Automatic name",int(cfg["naming"]["automatic"]),0,1,[0,1]),
+            string("Output/Case",cfg["naming"]["case"]),
+            string("Result/NAS name","",readonly=True),
             number("Mesh/Scale fraction",cfg["mesh"]["scale_fraction"],1e-6,1),
             number("Mesh/Fixed size (0 auto)",cfg["mesh"]["target_size"] or 0),
             number("Quality/Maximum AR",cfg["quality"]["max_aspect_ratio"],1,3),
@@ -75,6 +78,7 @@ def read_configuration(base: dict) -> dict:
         cfg["geometry"]["parameters"]["origin"]=[number("Geometry/Origin "+axis) for axis in "XYZ"]
     for target,name in (("length_unit","Units/Input"),("output_unit","Units/Output"),("name","Output/Name"),("output_dir","Output/Folder")):
         cfg[target]=string(name)
+    cfg["naming"].update(automatic=bool(number("Output/Automatic name")),case=string("Output/Case"))
     fixed=number("Mesh/Fixed size (0 auto)")
     cfg["mesh"].update(mode="fixed" if fixed>0 else "auto",target_size=fixed or None,scale_fraction=number("Mesh/Scale fraction"))
     cfg["quality"].update(max_aspect_ratio=number("Quality/Maximum AR"),min_angle_deg=number("Quality/Minimum angle"))
@@ -153,6 +157,7 @@ class Controller:
         if action==4:
             report=publish_current(self.context,self.history)
             gmsh.onelab.setString("BRL/Result/Output folder",[report["output_directory"]])
+            gmsh.onelab.setString("BRL/Result/NAS name",[report["artifacts"]["nas"] or "발행 보류"])
             return report
         return assessment
 

@@ -14,6 +14,7 @@ OPERATIONS = {"fuse", "cut", "intersect"}
 DEFAULTS: dict[str, Any] = {
     "version": 1,
     "name": "surface_mesh",
+    "naming": {"automatic": True, "source_name": None, "case": ""},
     "output_dir": "outputs",
     "length_unit": "mm",
     "output_unit": "mm",
@@ -126,6 +127,19 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"unknown top-level keys: {sorted(unknown)}")
     merged = _merge(DEFAULTS, config)
+    # 기존 JSON의 명시적 name은 자동 이름을 선택하지 않는 한 유지한다.
+    if "name" in config and "naming" not in config:
+        merged["naming"]["automatic"] = False
+    naming = merged["naming"]
+    if not isinstance(naming, dict) or set(naming) - set(DEFAULTS["naming"]):
+        raise ValueError("unknown naming keys")
+    if not isinstance(naming["automatic"], bool):
+        raise ValueError("naming.automatic must be boolean")
+    if naming["source_name"] is not None and (not isinstance(naming["source_name"], str) or not naming["source_name"].strip()):
+        raise ValueError("naming.source_name must be a non-empty string or null")
+    case = naming["case"]
+    if not isinstance(case, str) or len(case) > 40 or any(not (c.isalnum() or c in "_-") for c in case):
+        raise ValueError("naming.case must be a short portable suffix")
     # Geometry nodes are discriminated unions, not partial updates of the default plate.
     if "geometry" in config:
         merged["geometry"] = deepcopy(config["geometry"])

@@ -322,6 +322,28 @@
           }
         }
       }
+    },
+    "naming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "automatic": {
+          "type": "boolean",
+          "default": true
+        },
+        "source_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "case": {
+          "type": "string",
+          "maxLength": 40,
+          "pattern": "^[\\w-]*$"
+        }
+      }
     }
   },
   "$defs": {

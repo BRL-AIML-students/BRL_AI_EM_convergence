@@ -64,6 +64,7 @@ class AppServer(ThreadingHTTPServer):
         self.work_dir = work_dir or Path(tempfile.mkdtemp(prefix="brl_mesh_ui_"))
         self.owns_work_dir = work_dir is None
         self.jobs: dict[str, Job] = {}
+        self.cad_names: dict[str, str] = {}
         self.lock = threading.Lock()
         self.active: str | None = None
         self.worker: subprocess.Popen | None = None
@@ -145,7 +146,7 @@ class AppServer(ThreadingHTTPServer):
                 job.error = f"Mesh result is invalid ({detail}). See {report_path}. NAS preview is withheld."
                 job.state = "error"
                 return
-            nas_path = output / f"{config['name']}.nas"
+            nas_path = output / job.report["artifacts"]["nas"]
             if not nas_path.is_file():
                 raise RuntimeError("Generation finished without the expected NAS file.")
             if nas_path.stat().st_size > MAX_NAS_BYTES:
@@ -243,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
                 data = self._body(MAX_CAD_BYTES)
                 upload = self.server.work_dir / f"cad_{uuid.uuid4().hex}{suffix}"
                 upload.write_bytes(data)
+                self.server.cad_names[str(upload)] = Path(filename.replace("\\", "/")).name
                 self._json(200, {"path": str(upload), "name": Path(filename).name})
             elif path.path == "/api/jobs":
                 config = json.loads(self._body(MAX_JSON_BYTES))
@@ -251,6 +253,9 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(config.get("geometry"), dict):
                     absolute_cad_paths(config["geometry"])
                 config = validate(config)
+                geometry = config["geometry"]
+                if geometry["kind"] == "cad" and config["naming"]["source_name"] is None:
+                    config["naming"]["source_name"] = self.server.cad_names.get(geometry["path"])
                 output = Path(config["output_dir"]).expanduser()
                 if not output.is_absolute():
                     output = ROOT / output
