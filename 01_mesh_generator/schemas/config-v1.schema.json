@@ -228,7 +228,14 @@
             "fragment_surface_tags": {
               "type": "array",
               "uniqueItems": true,
-              "oneOf": [{"maxItems": 0}, {"minItems": 2}],
+              "oneOf": [
+                {
+                  "maxItems": 0
+                },
+                {
+                  "minItems": 2
+                }
+              ],
               "items": {
                 "type": "integer",
                 "minimum": 1
@@ -332,6 +339,7 @@
             "sphere",
             "box",
             "cylinder",
+            "ogive",
             "cad",
             "fuse",
             "cut",
@@ -368,6 +376,18 @@
               "items": {
                 "type": "number"
               }
+            },
+            "D": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "L": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "t": {
+              "type": "number",
+              "minimum": 0
             }
           }
         },

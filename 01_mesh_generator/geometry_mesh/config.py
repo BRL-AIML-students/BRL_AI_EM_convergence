@@ -8,7 +8,7 @@ from typing import Any
 
 
 CAD_SUFFIXES = {".step", ".stp", ".iges", ".igs", ".brep"}
-PRIMITIVES = {"plate", "disk", "sphere", "box", "cylinder"}
+PRIMITIVES = {"plate", "disk", "sphere", "box", "cylinder", "ogive"}
 OPERATIONS = {"fuse", "cut", "intersect"}
 
 DEFAULTS: dict[str, Any] = {
@@ -75,9 +75,22 @@ def _validate_node(node: dict[str, Any], path: str = "geometry") -> None:
         required = {
             "plate": ("length", "width"), "disk": ("radius",), "sphere": ("radius",),
             "box": ("length", "width", "height"), "cylinder": ("radius", "height"),
+            "ogive": ("D", "L", "t"),
         }[kind]
         for key in required:
+            if kind == "ogive" and key == "t":
+                value = params.get("t")
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                    raise ValueError(f"{path}.parameters.t must be finite and nonnegative")
+                continue
             _positive(params.get(key), f"{path}.parameters.{key}")
+        if kind == "ogive":
+            if params["L"] < params["D"] / 2:
+                raise ValueError("tangent ogive requires L >= D/2")
+            if params["t"] >= params["D"] / 2:
+                raise ValueError("ogive t must be smaller than D/2")
+            if params["t"] > 0 and params["L"] == params["D"] / 2:
+                raise ValueError("finite-thickness ogive requires L > D/2 with the existing offset construction")
         unknown_params = set(params) - set(required) - {"origin"}
         if unknown_params:
             raise ValueError(f"unknown keys at {path}.parameters: {sorted(unknown_params)}")

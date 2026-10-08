@@ -24,13 +24,16 @@ def _primitive(node: dict[str, Any], scale: float) -> list[tuple[int, int]]:
         return [(3, occ.addBox(x, y, z, p["length"] * scale, p["width"] * scale, p["height"] * scale))]
     if kind == "cylinder":
         return [(3, occ.addCylinder(x, y, z, 0.0, 0.0, p["height"] * scale, p["radius"] * scale))]
+    if kind == "ogive":
+        from .ogive import build as build_ogive
+        return build_ogive(p["D"] * scale, p["L"] * scale, p["t"] * scale, (x, y, z))
     raise ValueError(f"unsupported primitive {kind}")
 
 
 def _build_node(node: dict[str, Any], scale: float, output_unit: str) -> list[tuple[int, int]]:
     kind = node["kind"]
     occ = gmsh.model.occ
-    if kind in {"plate", "disk", "sphere", "box", "cylinder"}:
+    if kind in {"plate", "disk", "sphere", "box", "cylinder", "ogive"}:
         return _primitive(node, scale)
     if kind == "cad":
         suffix = Path(node["path"]).suffix.lower()

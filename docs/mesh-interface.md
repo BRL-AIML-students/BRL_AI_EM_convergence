@@ -4,7 +4,7 @@
 
 ## JSON 설정과 실행
 
-CLI는 버전 1 JSON 설정 하나를 받습니다. CAD 경로는 설정 파일이 있는 폴더 기준으로 해석합니다. 출력 폴더는 프로세스의 현재 작업 폴더 기준입니다. 형상은 `plate`, `disk`, `sphere`, `box`, `cylinder`, `cad`, `fuse`, `cut`, `intersect`를 지원합니다. 길이 단위는 `m`, `cm`, `mm`, `um`입니다.
+CLI는 버전 1 JSON 설정 하나를 받습니다. CAD 경로는 설정 파일이 있는 폴더 기준으로 해석합니다. 출력 폴더는 프로세스의 현재 작업 폴더 기준입니다. 형상은 `plate`, `disk`, `sphere`, `box`, `cylinder`, `ogive`, `cad`, `fuse`, `cut`, `intersect`를 지원합니다. 길이 단위는 `m`, `cm`, `mm`, `um`입니다.
 
 프로젝트 루트에서:
 
@@ -141,3 +141,7 @@ finally:
 ```
 
 File/Open 등 기존 모델은 `session.adopt_current(configuration)`으로 채택합니다. Gmsh 작업은 같은 main thread/세션에서 순차 실행합니다. `_profile`은 현재 내부 프로필 접근 함수이며 장기 안정 API로 보장하지 않습니다. 이 API는 메시의 독립 생성·확인용이고 MoM 연결·교정은 포함하지 않습니다.
+
+## ogive 내부 형상
+
+`geometry.kind="ogive"`와 `parameters`의 `D`, `L`, `t`를 입력합니다. `origin`은 선택 사항입니다. 입력 길이 단위를 따르며 축은 +Z입니다. 기존 tangent-ogive 원호·180° 회전/복사 방식으로 생성하고 STEP을 쓰지 않습니다. `t=0`은 밑면이 열린 곡면, `t>0`은 내면·외면·바닥 링을 가진 벽 두께 솔리드입니다. `D>0`, `L>=D/2`, `0<=t<D/2`를 요구하며 기존 두께 생성은 `L>D/2`에서 지원합니다. 메시 출력은 1차 삼각형 표면입니다. ogive의 해석적 mesh 형상 오차 평가는 아직 제공하지 않습니다.

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ogive",
+  "output_dir": "outputs",
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "geometry": {
+    "kind": "ogive",
+    "parameters": {
+      "D": 110,
+      "L": 200,
+      "t": 3
+    }
+  },
+  "mesh": {
+    "scale_fraction": 0.04
+  }
+}
