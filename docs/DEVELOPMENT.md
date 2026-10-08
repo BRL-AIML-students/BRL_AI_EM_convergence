@@ -23,3 +23,5 @@ node .\tests\test_viewer_js.cjs
 ## GitHub 협업
 
 이 저장소의 기본 공개 저장소는 `BRL-AIML-students/BRL_AI_EM_convergence`이며 기본 브랜치는 `main`입니다. 기능 작업은 브랜치에서 진행하고, 공유가 필요하면 변경 내용과 확인 방법을 담은 PR로 제안합니다. PR 설명에는 관련 CLI/UI 경로, NAS 또는 보고서 계약 변경, 수행한 검증을 기록합니다. 코드 리뷰와 병합은 GitHub PR에서 진행합니다.
+
+commit 메시지와 PR 제목·본문은 한글로 작성하며 기술 용어와 파라미터는 영문을 유지합니다. 기능별 branch·PR을 순차 병합하고 의미 있는 commit을 merge commit으로 보존합니다.

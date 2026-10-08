@@ -33,7 +33,7 @@ def parameters(configuration: dict) -> list[dict]:
         if choices: p["choices"] = choices
         return p
     params=[{"type":"number","name":ACTION,"values":[0],"choices":[0,1,2,3,4,5]},
-            string("Geometry/Kind",geometry["kind"],["plate","disk","sphere","box","cylinder","cad"]),
+            string("Geometry/Kind",geometry["kind"],["plate","disk","sphere","box","cylinder","ogive","cad"]),
             string("Geometry/CAD file",geometry.get("path",""),file=True),
             string("Units/Input",cfg["length_unit"],["m","cm","mm","um"]),
             string("Units/Output",cfg["output_unit"],["m","cm","mm","um"]),
@@ -55,6 +55,8 @@ def parameters(configuration: dict) -> list[dict]:
             number("Result/Review candidates",0,readonly=True)]
     for name in ("length","width","radius","height"):
         params.append(number("Geometry/"+name,values.get(name,10),1e-12))
+    for name,default in (("D",110),("L",200),("t",3)):
+        params.append(number("Geometry/"+name,values.get(name,default),0 if name == "t" else 1e-12))
     for axis,value in zip("XYZ",values.get("origin",[0,0,0])):
         params.append(number("Geometry/Origin "+axis,value,-1e12,1e12))
     return params
@@ -68,7 +70,7 @@ def read_configuration(base: dict) -> dict:
     if kind=="cad":
         cfg["geometry"]={"kind":"cad","path":str(Path(string("Geometry/CAD file")).expanduser().resolve())}
     else:
-        required={"plate":["length","width"],"disk":["radius"],"sphere":["radius"],"box":["length","width","height"],"cylinder":["radius","height"]}
+        required={"plate":["length","width"],"disk":["radius"],"sphere":["radius"],"box":["length","width","height"],"cylinder":["radius","height"],"ogive":["D","L","t"]}
         cfg["geometry"]={"kind":kind,"parameters":{name:number("Geometry/"+name) for name in required[kind]}}
         cfg["geometry"]["parameters"]["origin"]=[number("Geometry/Origin "+axis) for axis in "XYZ"]
     for target,name in (("length_unit","Units/Input"),("output_unit","Units/Output"),("name","Output/Name"),("output_dir","Output/Folder")):

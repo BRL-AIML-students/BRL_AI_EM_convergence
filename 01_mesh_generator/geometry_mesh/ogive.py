@@ -1,50 +1,8 @@
-"""
-Standalone tangent-ogive CAD generator using the Gmsh Python API.
-
-This script does NOT use main.py or ogive_mesh.py.
-It only creates an ogive CAD model and exports it as a STEP file.
-
-Geometry:
-    (x + R - D/2)^2 + z^2 = R^2
-    R = D * ((L/D)^2 + 1/4)
-
-Behavior:
-    t = 0.0  -> zero-thickness open ogive surface
-    t > 0.0  -> finite-thickness 3-D solid
-
-Units:
-    mm
-"""
+"""기존 원호·반회전 방식의 tangent-ogive 생성. 호출자가 Gmsh 세션을 관리한다."""
+from __future__ import annotations
 
 import math
-from pathlib import Path
-
-try:
-    import gmsh
-except ImportError as exc:
-    raise ImportError(
-        "The Gmsh Python module is required.\n"
-        "Install it with:\n"
-        "    pip install gmsh"
-    ) from exc
-
-
-# ============================================================
-# USER PARAMETERS
-# ============================================================
-
-D = 110.0          # Outer base diameter [mm]
-L = 200.0          # Outer ogive height [mm]
-t = 3.0            # Wall thickness [mm]
-                    # t = 0.0 -> surface only
-                    # t > 0.0 -> 3-D solid
-
-OUTPUT_DIR = "ogive_cad"
-
-
-# ============================================================
-# GEOMETRY FUNCTIONS
-# ============================================================
+import gmsh
 
 def tangent_ogive_parameters(D: float, L: float):
     """Return tangent-ogive generating-circle radius R and x-center xc."""
@@ -127,25 +85,17 @@ def _make_zero_thickness_surface(D: float, L: float):
     )
 
     # Make the two half-surfaces conformal.
-    gmsh.model.occ.fragment(
+    joined, _ = gmsh.model.occ.fragment(
         [(2, half_surface_1)],
         [(2, half_surface_2)],
     )
 
     gmsh.model.occ.synchronize()
 
-    surfaces = gmsh.model.getEntities(2)
-    volumes = gmsh.model.getEntities(3)
-
-    if volumes:
-        raise RuntimeError(
-            "Zero-thickness CAD unexpectedly contains a volume."
-        )
-
+    surfaces = [dt for dt in joined if dt[0] == 2]
     if not surfaces:
-        raise RuntimeError(
-            "Zero-thickness ogive surface creation failed."
-        )
+        raise RuntimeError("Zero-thickness ogive surface creation failed.")
+    return surfaces
 
 
 def _make_wall_section(D: float, L: float, t: float):
@@ -289,131 +239,34 @@ def _make_finite_thickness_solid(D: float, L: float, t: float):
 
     gmsh.model.occ.synchronize()
 
-    volumes = gmsh.model.getEntities(3)
-
-    if len(volumes) != 1:
-        raise RuntimeError(
-            f"Expected one final ogive volume, "
-            f"got {len(volumes)}: {volumes}"
-        )
-
-    return z_inner_tip
+    return [dt for dt in fused if dt[0] == 3], z_inner_tip
 
 
-# ============================================================
-# CAD GENERATION
-# ============================================================
-
-def create_ogive_cad(
-    D: float,
-    L: float,
-    t: float = 0.0,
-    output_dir="ogive_cad",
-):
-    """
-    Create tangent-ogive CAD and export it as STEP.
-
-    Parameters
-    ----------
-    D : float
-        Outer base diameter [mm].
-
-    L : float
-        Outer height [mm].
-
-    t : float
-        Wall thickness [mm].
-        t = 0.0 -> zero-thickness surface.
-        t > 0.0 -> finite-thickness solid.
-
-    output_dir : str or pathlib.Path
-        Output folder.
-
-    Returns
-    -------
-    str
-        Absolute path of the generated STEP file.
-    """
-
-    if t < 0:
-        raise ValueError("Thickness t cannot be negative.")
-
-    R, _ = tangent_ogive_parameters(D, L)
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    if math.isclose(t, 0.0, abs_tol=1.0e-12):
-        file_name = "ogive_t0mm.step"
-        model_type = "Zero-thickness surface"
+def build(D: float, L: float, t: float = 0.0, origin=(0.0, 0.0, 0.0)):
+    """현재 OCC 모델에 ogive를 추가하고 최상위 entity를 반환한다. STEP은 생성하지 않는다."""
+    before = set(gmsh.model.occ.getEntities())
+    if t == 0:
+        roots = _make_zero_thickness_surface(D, L)
     else:
-        file_name = f"ogive_t{t:g}mm.step"
-        model_type = "Finite-thickness 3-D solid"
-
-    output_file = (
-        output_dir / file_name
-    ).resolve()
-
-    gmsh.initialize()
-
-    try:
-        gmsh.model.add("ogive_cad")
-
-        if math.isclose(
-            t,
-            0.0,
-            abs_tol=1.0e-12,
-        ):
-            _make_zero_thickness_surface(
-                D,
-                L,
-            )
-            z_inner_tip = None
-
-        else:
-            z_inner_tip = _make_finite_thickness_solid(
-                D,
-                L,
-                t,
-            )
-
-        gmsh.write(str(output_file))
-
-    finally:
-        gmsh.finalize()
-
-    print()
-    print("========================================")
-    print("Tangent-ogive CAD generation complete")
-    print("========================================")
-    print(f"Outer D        = {D:.3f} mm")
-    print(f"Outer L        = {L:.3f} mm")
-    print(f"Ogive R        = {R:.6f} mm")
-    print(f"Thickness t    = {t:.3f} mm")
-    print(f"Model type     = {model_type}")
-
-    if z_inner_tip is not None:
-        print(f"Outer tip z    = {L:.6f} mm")
-        print(f"Inner tip z    = {z_inner_tip:.6f} mm")
-        print(f"Inner base dia = {D - 2.0 * t:.6f} mm")
-
-    print(f"STEP file      = {output_file}")
-
-    return str(output_file)
-
-
-# ============================================================
-# RUN DIRECTLY
-# ============================================================
-
-if __name__ == "__main__":
-
-    create_ogive_cad(
-        D=D,
-        L=L,
-        t=t,
-        output_dir=OUTPUT_DIR,
-    )
+        roots, _ = _make_finite_thickness_solid(D, L, t)
+    gmsh.model.occ.synchronize()
+    # 원호 중심·단면 등 생성용 entity가 bbox와 메시 크기에 섞이지 않도록 제거한다.
+    keep = set(roots)
+    pending = list(roots)
+    while pending:
+        entity = pending.pop()
+        if entity[0] == 0:
+            continue
+        for dim, tag in gmsh.model.getBoundary([entity], oriented=False):
+            child = (dim, abs(tag))
+            if child not in keep:
+                keep.add(child)
+                pending.append(child)
+    for dim in (2, 1, 0):
+        unused = [dt for dt in gmsh.model.occ.getEntities(dim) if dt not in before and dt not in keep]
+        if unused:
+            gmsh.model.occ.remove(unused, recursive=False)
+    if any(origin):
+        gmsh.model.occ.translate(roots, *origin)
+    gmsh.model.occ.synchronize()
+    return roots
