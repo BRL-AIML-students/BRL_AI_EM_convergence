@@ -87,6 +87,20 @@ def test_server_generates_and_serves_nas(tmp_path: Path):
         assert Path(job["output_directory"], "ui_integration.nas").read_bytes() == nas
 
 
+def test_server_uses_report_automatic_name(tmp_path: Path):
+    cfg = config(tmp_path / "automatic")
+    cfg["naming"] = {"automatic": True}
+    with running_server(tmp_path) as server:
+        code, data = request(server, "/api/jobs", method="POST", body=cfg)
+        assert code == 202
+        job = wait_for_job(server, json.loads(data)["id"])
+        assert job["state"] == "complete", job
+        assert job["report"]["artifacts"]["nas"].startswith("plate_L10_W10_mm_hMin")
+        code, nas = request(server, "/api/results/" + job["id"])
+        assert code == 200
+        assert (Path(job["output_directory"]) / job["report"]["artifacts"]["nas"]).read_bytes() == nas
+
+
 def test_server_rejects_invalid_requests_and_reports_worker_error(tmp_path: Path, monkeypatch):
     with running_server(tmp_path) as server:
         code, _ = request(server, "/api/jobs", method="POST", body=config(tmp_path / "results"), token=False)

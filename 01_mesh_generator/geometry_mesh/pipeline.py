@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -39,9 +40,13 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
     cfg, geometry, sizing, groups = context.configuration, context.geometry, context.sizing, context.groups
     profile = _profile()
     mesh, assessment = current(context, profile)
+    from .naming import resolve
+    cfg = deepcopy(cfg)
+    cfg["name"] = resolve(cfg, sizing)
     output_root = Path(cfg["output_dir"]).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    run_id = f'{cfg["name"]}_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}'
+    prefix = "run" if cfg["naming"]["automatic"] else cfg["name"]
+    run_id = f'{prefix}_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}'
     final = output_root / run_id
     stage = Path(tempfile.mkdtemp(prefix=f".{run_id}.pending-", dir=output_root))
     try:

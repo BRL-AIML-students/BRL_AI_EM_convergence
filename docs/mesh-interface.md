@@ -145,3 +145,7 @@ File/Open 등 기존 모델은 `session.adopt_current(configuration)`으로 채�
 ## ogive 내부 형상
 
 `geometry.kind="ogive"`와 `parameters`의 `D`, `L`, `t`를 입력합니다. `origin`은 선택 사항입니다. 입력 길이 단위를 따르며 축은 +Z입니다. 기존 tangent-ogive 원호·180° 회전/복사 방식으로 생성하고 STEP을 쓰지 않습니다. `t=0`은 밑면이 열린 곡면, `t>0`은 내면·외면·바닥 링을 가진 벽 두께 솔리드입니다. `D>0`, `L>=D/2`, `0<=t<D/2`를 요구하며 기존 두께 생성은 `L>D/2`에서 지원합니다. 메시 출력은 1차 삼각형 표면입니다. ogive의 해석적 mesh 형상 오차 평가는 아직 제공하지 않습니다.
+
+## 자동 NAS 이름
+
+`naming.automatic=true`는 형상명/원본명, 입력 치수·단위, 최종 `hMin`·`hMax`와 출력 단위, 주파수 `f`(GHz)·파장당 요소 수 `N`, 선택적 `naming.case`를 연결합니다. configID는 사용하지 않습니다. 소수점은 `p`로 표기하고 case는 마지막에 붙입니다. 기준 사례는 빈 case입니다. 외부 CAD는 `naming.source_name`에 원본 파일명을 지정할 수 있고 UI 업로드는 이를 보존합니다. 전체 설정은 report.json에 기록하고 반복 실행은 별도 run 폴더에 보관합니다. hMin/hMax는 Gmsh 제어값이며 실제 edge 길이의 보증 범위가 아닙니다. 기존 JSON에 name이 있고 naming이 없으면 수동 이름을 유지합니다.
