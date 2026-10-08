@@ -21,6 +21,8 @@ DEFAULTS: dict[str, Any] = {
     "geometry": {"kind": "plate", "parameters": {"length": 100.0, "width": 100.0}},
     "mesh": {
         "mode": "auto",
+        "controlled": False,
+        "minimum_size": None,
         "scale_fraction": 0.06,
         "chord_tolerance_fraction": 0.002,
         "small_feature_divisions": 2.5,
@@ -160,12 +162,26 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unknown mesh keys: {sorted(unknown_mesh)}")
     if mesh["mode"] not in {"auto", "fixed"}:
         raise ValueError("mesh.mode must be auto or fixed")
+    if not isinstance(mesh["controlled"], bool):
+        raise ValueError("mesh.controlled must be boolean")
+    value = mesh["minimum_size"]
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0):
+        raise ValueError("mesh.minimum_size must be finite and nonnegative or null")
     for key in ("scale_fraction", "chord_tolerance_fraction", "small_feature_divisions", "minimum_size_fraction", "growth_assessment_limit"):
         _positive(mesh[key], f"mesh.{key}")
     _positive(mesh["user_size_cap"], "mesh.user_size_cap", allow_none=True)
     _positive(mesh["target_size"], "mesh.target_size", allow_none=True)
     if mesh["mode"] == "fixed" and mesh["target_size"] is None:
         raise ValueError("mesh.target_size is required in fixed mode")
+    if mesh["controlled"]:
+        if mesh["mode"] == "fixed" and mesh["minimum_size"] is None:
+            raise ValueError("controlled fixed mode requires mesh.minimum_size")
+        if mesh["mode"] == "fixed" and mesh["minimum_size"] > mesh["target_size"]:
+            raise ValueError("minimum_size must not exceed target_size")
+        if mesh["mode"] == "auto" and mesh["minimum_size_fraction"] > mesh["scale_fraction"]:
+            raise ValueError("minimum_size_fraction must not exceed scale_fraction")
+        if mesh["element_budget"] is not None or mesh["user_size_cap"] is not None or mesh["improvement"]["fragment_surface_tags"]:
+            raise ValueError("controlled mode excludes element_budget, user_size_cap and fragment_surface_tags")
     if mesh["budget_policy"] not in {"respect_features", "respect_budget"}:
         raise ValueError("mesh.budget_policy must be respect_features or respect_budget")
     if mesh["element_budget"] is not None:
