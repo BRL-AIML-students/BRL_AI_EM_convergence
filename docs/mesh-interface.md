@@ -60,6 +60,8 @@ CAD volume 경계의 법선은 현재 삼각형과 CAD의 외향 방향을 발�
 
 점수는 프로필의 기준에 따른 형상 및 구조 지표입니다. 해석기 수렴이나 산란 오차를 직접 검증하지 않습니다. `not_assessed`인 항목은 검증 근거가 없음을 나타냅니다. 파장 기반 크기 규칙과 요소 크기 목표 또한 해석 정확도를 보증하지 않으므로, 실제 문제에 맞춘 수렴 검사가 필요합니다. CAD/CSG 가져오기 형상 충실도와 좁은 간격 검출은 보고서의 한계를 함께 확인하세요.
 
+`mesh.narrow_gap.enabled=true`는 서로 겹치지 않는 volume bounding box의 양의 간격을 검출합니다. `local.enabled=true`에서는 작은 curve/face의 유무와 관계없이 간격 영역에 자동 Box field를 생성하고 `transition_fraction` 거리에서 전역 크기로 전이합니다. 목표 크기는 간격 / divisions이며 hMin에 의해 제한될 수 있습니다. `sizing.narrow_gap_evidence.candidate_regions`와 `sizing.local.fields_applied`의 `source=narrow_gap_bbox`, `size_applied`, `minimum_size_clamped`로 검출·적용을 구분합니다. local OFF는 기존 전역 크기 후보로 적용하며 controlled 비교에서는 제외합니다. 이 방식은 정확한 CAD 표면 간격을 측정하지 않습니다.
+
 ## 브라우저 UI
 
 통합 UI는 `plate`, `disk`, `sphere`, `box`, `cylinder` 및 STEP/STP/IGES/IGS/BREP 형상을 받습니다. UI에서 CAD 경로를 직접 입력하거나 파일을 업로드할 수 있습니다. 업로드 제한은 50 MiB이며, 업로드 파일은 서버 임시 작업 폴더에 저장됩니다. 결과 폴더를 상대 경로로 지정하면 `01_mesh_generator` 기준으로 해석합니다. 입력 단위와 NAS 출력 단위를 선택하고 파장 목표, 재료의 상대 유전율·투자율, 자동 국소 세분화 또는 국소 상자 설정을 입력합니다. 메시 생성이 끝나면 NAS 결과를 오른쪽 뷰어에 표시하고, 실행 상태와 출력 폴더를 보여줍니다. JSON/HTML 보고서는 출력 폴더에 저장됩니다. UI는 보고서의 개별 점수표를 표시하지 않습니다. 생성 오류는 상태 표시와 세부 정보에 표시됩니다.

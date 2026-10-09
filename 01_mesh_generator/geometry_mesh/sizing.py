@@ -46,7 +46,7 @@ def _controlled_plan(geometry: dict, settings: dict) -> dict:
         "candidate_rules": rules, "wave": details,
         "local": {"enabled": False, "curve_tags": [], "surface_tags": [], "excluded_seam_curve_tags": [],
                   "smallest_feature": None, "near_size_fraction": settings["local"]["near_size_fraction"],
-                  "transition_distance": 0, "boxes": [], "fields_applied": []},
+                  "transition_distance": 0, "boxes": [], "gap_boxes": [], "fields_applied": []},
         "excluded_controls": ["curvature", "small_features", "local_fields", "box_fields", "narrow_gap", "budget", "post_mesh_improvement"],
     }
 
@@ -63,14 +63,33 @@ def _narrow_gap(geometry: dict[str, Any], settings: dict[str, Any]) -> tuple[flo
         return None, {"coverage": "not_assessed", "reason": "fewer than two volume entities", "method": "disjoint volume bounding-box distance"}
     boxes = [gmsh.model.getBoundingBox(dim, tag) for dim, tag in volumes]
     maximum = geometry["scale"] * settings["max_fraction"]
-    candidates = [
-        _bbox_distance(boxes[i], boxes[j])
-        for i in range(len(boxes)) for j in range(i + 1, len(boxes))
-    ]
-    candidates = [gap for gap in candidates if 0 < gap <= maximum]
+    candidates = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            a, b = boxes[i], boxes[j]
+            gap = _bbox_distance(a, b)
+            if not 0 < gap <= maximum:
+                continue
+            low, high = [], []
+            for axis in range(3):
+                if a[axis + 3] < b[axis]:
+                    start, end = a[axis + 3], b[axis]
+                elif b[axis + 3] < a[axis]:
+                    start, end = b[axis + 3], a[axis]
+                else:
+                    start, end = max(a[axis], b[axis]), min(a[axis + 3], b[axis + 3])
+                low.append(start)
+                high.append(end)
+            candidates.append({"volume_tags": [volumes[i][1], volumes[j][1]],
+                               "gap": gap, "min": low, "max": high,
+                               "size": gap / settings["divisions"]})
     if not candidates:
         return None, {"coverage": "not_assessed", "reason": "volume boxes overlap or no positive box gap is within the search distance", "method": "disjoint volume bounding-box distance"}
-    return min(candidates), {"coverage": "assessed", "reason": None, "method": "disjoint volume bounding-box distance", "limitation": "axis-aligned boxes can overestimate proximity and do not measure exact surface clearance"}
+    return min(c["gap"] for c in candidates), {
+        "coverage": "assessed", "reason": None, "method": "disjoint volume bounding-box distance",
+        "candidate_regions": candidates,
+        "limitation": "axis-aligned boxes can overestimate proximity and do not measure exact surface clearance",
+    }
 
 
 def _seam_curve_tags() -> set[int]:
@@ -119,6 +138,8 @@ def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
         reasons.append({"rule": "narrow_gap_bbox", "source_measure": gap, "candidate_size": gap_size})
     floor = settings["minimum_size"] if settings["minimum_size"] is not None else scale * settings["minimum_size_fraction"]
     local = settings["local"]
+    if gap is not None:
+        gap_evidence["planned_application"] = "local_box_fields" if local["enabled"] else "global_size"
     requested = min(base, feature) if feature is not None and not local["enabled"] else base
     cap = settings["user_size_cap"]
     if cap is not None:
@@ -186,7 +207,8 @@ def plan(geometry: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
                   if size <= scale * local["feature_threshold_fraction"]],
                   "smallest_feature": feature, "near_size_fraction": local["near_size_fraction"],
                   "transition_distance": scale * local["transition_fraction"],
-                  "boxes": local["boxes"], "fields_applied": []},
+                  "boxes": local["boxes"], "gap_boxes": gap_evidence.get("candidate_regions", []) if local["enabled"] else [],
+                  "fields_applied": []},
     }
 
 
@@ -224,17 +246,21 @@ def apply(sizing: dict[str, Any]) -> None:
             fields.append(threshold)
             local["fields_applied"].append({"type": "Distance+Threshold", "near_size": near,
                                             "far_size": sizing["target_size"]})
-        for box in local["boxes"]:
+        for source, box in [("user", box) for box in local["boxes"]] + [
+            ("narrow_gap_bbox", box) for box in local.get("gap_boxes", [])
+        ]:
             tag = gmsh.model.mesh.field.add("Box")
             for axis, low, high in zip("XYZ", box["min"], box["max"]):
                 gmsh.model.mesh.field.setNumber(tag, axis + "Min", low)
                 gmsh.model.mesh.field.setNumber(tag, axis + "Max", high)
-            gmsh.model.mesh.field.setNumber(tag, "VIn", max(sizing["minimum_size"],
-                                                              min(box["size"], sizing["target_size"])))
+            applied_size = max(sizing["minimum_size"], min(box["size"], sizing["target_size"]))
+            gmsh.model.mesh.field.setNumber(tag, "VIn", applied_size)
             gmsh.model.mesh.field.setNumber(tag, "VOut", sizing["target_size"])
             gmsh.model.mesh.field.setNumber(tag, "Thickness", local["transition_distance"])
             fields.append(tag)
-            local["fields_applied"].append({"type": "Box", "bounds": box})
+            local["fields_applied"].append({"type": "Box", "source": source, "bounds": box,
+                                            "size_applied": applied_size,
+                                            "minimum_size_clamped": box["size"] < sizing["minimum_size"]})
         if fields:
             if len(fields) > 1:
                 combined = gmsh.model.mesh.field.add("Min")
