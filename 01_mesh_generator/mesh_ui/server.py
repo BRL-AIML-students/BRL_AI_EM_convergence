@@ -16,7 +16,7 @@ import uuid
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
 
-from geometry_mesh.config import CAD_SUFFIXES, validate
+from geometry_mesh.config import CAD_SUFFIXES, validate, resolve_cad_paths
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,12 +28,7 @@ MAX_NAS_BYTES = 100 * 1024 * 1024
 
 
 def absolute_cad_paths(node: dict) -> None:
-    if node.get("kind") == "cad" and isinstance(node.get("path"), str):
-        path = Path(node["path"]).expanduser()
-        node["path"] = str((path if path.is_absolute() else ROOT / path).resolve())
-    for child in node.get("objects", []):
-        if isinstance(child, dict):
-            absolute_cad_paths(child)
+    resolve_cad_paths(node, ROOT)
 
 
 @dataclass

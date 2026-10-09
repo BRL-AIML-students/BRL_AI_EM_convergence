@@ -183,6 +183,26 @@ def test_relative_cad_path_is_resolved_before_worker_config(tmp_path: Path, monk
     assert geometry["objects"][0]["path"] == str((tmp_path / "한글 part.step").resolve())
 
 
+@pytest.mark.parametrize("endpoint", ["/api/jobs", "/api/comparisons"])
+def test_invalid_json_structure_returns_http_400_without_worker(tmp_path, endpoint):
+    invalid = [
+        {"mesh": None}, {"mesh": []}, {"mesh": {"wave": None}},
+        {"mesh": {"local": None}}, {"mesh": {"improvement": None}},
+        {"export": None}, {"quality": None}, {"naming": None},
+        {"geometry": None}, {"geometry": []},
+        {"geometry": {"kind": "plate", "parameters": None}},
+        {"geometry": {"kind": "cad", "path": []}},
+        {"geometry": {"kind": "cut", "objects": None}},
+        {"geometry": {"kind": "cut", "objects": [None, {}]}},
+    ]
+    with running_server(tmp_path) as server:
+        for supplied in invalid:
+            code, body = request(server, endpoint, method="POST", body=supplied)
+            assert code == 400
+            assert isinstance(json.loads(body)["error"], str)
+            assert not server.jobs and server.active is None
+
+
 def test_close_before_worker_start_prevents_launch_and_waits_for_thread(tmp_path: Path, monkeypatch):
     server = AppServer(0)
     entered = threading.Event()
