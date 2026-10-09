@@ -68,13 +68,36 @@ def _positive(value: Any, path: str, *, allow_none: bool = False) -> None:
         raise ValueError(f"{path} must be a finite positive number")
 
 
+def _object(value: Any, path: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object")
+
+
+def _object_shapes(supplied: dict, defaults: dict, path: str = "") -> None:
+    # Check before merging or indexing; null/scalars must not replace objects.
+    for key, value in supplied.items():
+        if key in defaults and isinstance(defaults[key], dict):
+            location = f"{path}.{key}" if path else key
+            _object(value, location)
+            _object_shapes(value, defaults[key], location)
+
+
+def _choice(value: Any, choices: set[str], path: str) -> None:
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError(f"{path} must be one of {', '.join(sorted(choices))}")
+
+
 def _validate_node(node: dict[str, Any], path: str = "geometry") -> None:
+    _object(node, path)
     kind = node.get("kind")
+    if not isinstance(kind, str):
+        raise ValueError(f"{path}.kind must be a string")
     if kind in PRIMITIVES:
         unknown_node = set(node) - {"kind", "parameters"}
         if unknown_node:
             raise ValueError(f"unknown keys at {path}: {sorted(unknown_node)}")
         params = node.get("parameters", {})
+        _object(params, f"{path}.parameters")
         required = {
             "plate": ("length", "width"), "disk": ("radius",), "sphere": ("radius",),
             "box": ("length", "width", "height"), "cylinder": ("radius", "height"),
@@ -98,13 +121,15 @@ def _validate_node(node: dict[str, Any], path: str = "geometry") -> None:
         if unknown_params:
             raise ValueError(f"unknown keys at {path}.parameters: {sorted(unknown_params)}")
         origin = params.get("origin", [0.0, 0.0, 0.0])
-        if len(origin) != 3 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in origin):
+        if not isinstance(origin, list) or len(origin) != 3 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in origin):
             raise ValueError(f"{path}.parameters.origin must contain three finite numbers")
     elif kind == "cad":
         unknown_node = set(node) - {"kind", "path"}
         if unknown_node:
             raise ValueError(f"unknown keys at {path}: {sorted(unknown_node)}")
-        source = Path(str(node.get("path", "")))
+        if not isinstance(node.get("path"), str) or not node["path"].strip():
+            raise ValueError(f"{path}.path must be a non-empty string")
+        source = Path(node["path"])
         if not source.is_file() or source.suffix.lower() not in CAD_SUFFIXES:
             raise ValueError(f"{path}.path must be an existing STEP/STP/IGES/IGS/BREP file")
     elif kind in OPERATIONS:
@@ -128,6 +153,7 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     unknown = set(config) - set(DEFAULTS)
     if unknown:
         raise ValueError(f"unknown top-level keys: {sorted(unknown)}")
+    _object_shapes(config, DEFAULTS)
     merged = _merge(DEFAULTS, config)
     # 기존 JSON의 명시적 name은 자동 이름을 선택하지 않는 한 유지한다.
     if "name" in config and "naming" not in config:
@@ -148,8 +174,7 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if merged["version"] != 1:
         raise ValueError("only configuration version 1 is supported")
     for key in ("length_unit", "output_unit"):
-        if merged[key] not in {"m", "cm", "mm", "um"}:
-            raise ValueError(f"{key} must be one of m, cm, mm, um")
+        _choice(merged[key], {"m", "cm", "mm", "um"}, key)
     name = merged["name"]
     if not isinstance(name, str) or not name or any(c in name for c in '<>:"/\\|?*'):
         raise ValueError("name must be a non-empty portable file name")
@@ -160,8 +185,7 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     unknown_mesh = set(mesh) - set(DEFAULTS["mesh"])
     if unknown_mesh:
         raise ValueError(f"unknown mesh keys: {sorted(unknown_mesh)}")
-    if mesh["mode"] not in {"auto", "fixed"}:
-        raise ValueError("mesh.mode must be auto or fixed")
+    _choice(mesh["mode"], {"auto", "fixed"}, "mesh.mode")
     if not isinstance(mesh["controlled"], bool):
         raise ValueError("mesh.controlled must be boolean")
     value = mesh["minimum_size"]
@@ -182,8 +206,7 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("minimum_size_fraction must not exceed scale_fraction")
         if mesh["element_budget"] is not None or mesh["user_size_cap"] is not None:
             raise ValueError("controlled mode excludes element_budget and user_size_cap")
-    if mesh["budget_policy"] not in {"respect_features", "respect_budget"}:
-        raise ValueError("mesh.budget_policy must be respect_features or respect_budget")
+    _choice(mesh["budget_policy"], {"respect_features", "respect_budget"}, "mesh.budget_policy")
     if mesh["element_budget"] is not None:
         if isinstance(mesh["element_budget"], bool) or not isinstance(mesh["element_budget"], int) or mesh["element_budget"] < 4:
             raise ValueError("mesh.element_budget must be an integer of at least 4")
@@ -259,8 +282,7 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     topo = quality["topology"]
     if not isinstance(topo, dict) or set(topo) - set(DEFAULTS["quality"]["topology"]):
         raise ValueError("unknown quality.topology keys")
-    if topo["boundary_mode"] not in {"auto", "open", "closed"}:
-        raise ValueError("quality.topology.boundary_mode must be auto, open or closed")
+    _choice(topo["boundary_mode"], {"auto", "open", "closed"}, "quality.topology.boundary_mode")
     _positive(topo["relative_tolerance"], "quality.topology.relative_tolerance")
     _positive(topo["protected_gap"], "quality.topology.protected_gap", allow_none=True)
     absolute = topo["absolute_tolerance"]
@@ -283,14 +305,22 @@ def load(path: str | Path) -> dict[str, Any]:
     data = json.loads(source.read_text(encoding="utf-8"))
     # Input paths are relative to the configuration file; output paths remain caller-relative.
     geometry = data.get("geometry", {}) if isinstance(data, dict) else {}
-    _resolve_cad_paths(geometry, source.parent)
+    resolve_cad_paths(geometry, source.parent)
     return validate(data)
 
 
-def _resolve_cad_paths(node: dict[str, Any], base: Path) -> None:
+def resolve_cad_paths(node: dict[str, Any], base: Path, path: str = "geometry") -> None:
+    """Resolve CLI/UI CAD paths while retaining validation error locations."""
+    _object(node, path)
     if node.get("kind") == "cad" and "path" in node:
-        candidate = Path(node["path"])
+        if not isinstance(node["path"], str) or not node["path"].strip():
+            raise ValueError(f"{path}.path must be a non-empty string")
+        candidate = Path(node["path"]).expanduser()
         if not candidate.is_absolute():
-            node["path"] = str((base / candidate).resolve())
-    for child in node.get("objects", []):
-        _resolve_cad_paths(child, base)
+            candidate = base / candidate
+        node["path"] = str(candidate.resolve())
+    children = node.get("objects", [])
+    if not isinstance(children, list):
+        raise ValueError(f"{path}.objects must be a list")
+    for index, child in enumerate(children):
+        resolve_cad_paths(child, base, f"{path}.objects[{index}]")

@@ -8,6 +8,8 @@ CLI는 버전 1 JSON 설정 하나를 받습니다. CAD 경로는 설정 파일�
 
 BREP 단위 변환은 솔리드와 함께 저장된 독립 sheet·curve·point에도 적용합니다. 상위 entity의 boundary는 중복 변환하지 않습니다. STEP/IGES는 파일의 단위 메타데이터에 따라 출력 단위로 변환합니다.
 
+중첩 설정 object와 좌표 array의 자료형을 먼저 검사합니다. `mesh=null`, `geometry=[]`, `parameters=null`, 잘못된 CAD 경로 자료형 등은 해당 설정 경로를 포함한 검증 오류로 반환합니다. CLI는 exit code 1, 브라우저 API의 생성·비교 요청은 HTTP 400과 JSON `error`를 반환하며 worker를 시작하지 않습니다. CAD 경로의 `~`는 사용자 홈으로 확장합니다.
+
 프로젝트 루트에서:
 
 ```powershell
