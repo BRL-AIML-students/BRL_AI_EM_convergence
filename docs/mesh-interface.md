@@ -6,6 +6,8 @@
 
 CLI는 버전 1 JSON 설정 하나를 받습니다. CAD 경로는 설정 파일이 있는 폴더 기준으로 해석합니다. 출력 폴더는 프로세스의 현재 작업 폴더 기준입니다. 형상은 `plate`, `disk`, `sphere`, `box`, `cylinder`, `ogive`, `cad`, `fuse`, `cut`, `intersect`를 지원합니다. 길이 단위는 `m`, `cm`, `mm`, `um`입니다.
 
+BREP 단위 변환은 솔리드와 함께 저장된 독립 sheet·curve·point에도 적용합니다. 상위 entity의 boundary는 중복 변환하지 않습니다. STEP/IGES는 파일의 단위 메타데이터에 따라 출력 단위로 변환합니다.
+
 프로젝트 루트에서:
 
 ```powershell

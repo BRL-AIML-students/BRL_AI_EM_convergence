@@ -42,8 +42,13 @@ def _build_node(node: dict[str, Any], scale: float, output_unit: str) -> list[tu
         imported = occ.importShapes(str(Path(node["path"]).resolve()), highestDimOnly=False)
         if not imported:
             raise ValueError("CAD import produced no entities")
-        top_dim = max(dim for dim, _ in imported)
-        roots = [dt for dt in imported if dt[0] == top_dim]
+        # Preserve independent sheets/curves alongside solids. Scaling every
+        # imported entity would transform the boundaries of a root twice.
+        occ.synchronize()
+        boundaries = set(gmsh.model.getBoundary(
+            [dt for dt in imported if dt[0] > 0], combined=False, oriented=False,
+        ))
+        roots = sorted(set(imported) - boundaries)
         if suffix == ".brep" and scale != 1.0:
             occ.dilate(roots, 0.0, 0.0, 0.0, scale, scale, scale)
         return roots
