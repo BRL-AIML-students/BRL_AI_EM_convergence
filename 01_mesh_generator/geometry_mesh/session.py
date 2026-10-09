@@ -12,6 +12,7 @@ from .geometry import build, assign_surface_groups
 from .meshdata import snapshot
 from .quality import analyze
 from .sizing import plan, apply
+from .normals import inspect as inspect_normals
 
 
 @dataclass
@@ -143,6 +144,7 @@ def current(context: Context, profile: dict) -> tuple[dict, dict]:
     context.geometry["closed_surface_tags"] = sorted({abs(int(t)) for d,t in gmsh.model.getBoundary(volumes,combined=False,oriented=False) if d==2}) if volumes else []
     context.geometry["volume_count"] = len(volumes)
     mesh = snapshot(context.membership)
+    mesh["outward_normal_audit"] = inspect_normals(mesh)
     budget = context.sizing["element_budget"]
     context.sizing["post_mesh_budget"] = {"coverage": "not_assessed" if budget is None else "assessed",
                                          "actual_triangle_count": len(mesh["element_ids"]), "element_budget": budget,

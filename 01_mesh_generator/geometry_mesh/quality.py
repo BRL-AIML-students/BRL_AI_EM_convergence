@@ -167,17 +167,22 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     }
 
     fidelity = _geometry_fidelity(mesh, xyz, areas, geometry, sizing, profile)
+    outward, normal_gates = mesh.get("outward_normal_audit", (
+        {"coverage": "not_assessed", "reason": "no CAD solid normal reference supplied"}, [],
+    ))
     topo_metrics = {
         "boundary_edges": boundary_edges, "nonmanifold_edges": len(nonmanifold_groups),
         "inconsistent_orientation_edges": len(inconsistent_groups), "expected_closed": expected_closed,
         "closed_manifold_consistently_oriented": boundary_edges == 0 and not len(nonmanifold_groups) and not len(inconsistent_groups),
         "conformity": conformity,
+        "outward_normals": outward,
     }
-    topo_problems = sorted(set(nonmanifold_eids + inconsistent_eids))
+    topo_problems = sorted(set(nonmanifold_eids + inconsistent_eids +
+                              [eid for gate in normal_gates for eid in gate["element_ids"]]))
     topo_score = 100.0
     if nonmanifold_groups.size or inconsistent_groups.size:
         topo_score = 0.0
-    elif conformity_gates:
+    elif conformity_gates or normal_gates:
         topo_score = 0.0
     elif boundary_edges and geometry["analytic_kind"] not in {"plate", "disk"}:
         topo_score = 70.0
@@ -196,6 +201,7 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
     if np.any(shape_failed):
         fatal.append({"code": "triangle_shape_limits", "message": "every triangle must satisfy the configured AR and angle limits", "element_ids": shape_problems})
     fatal.extend(conformity_gates)
+    fatal.extend(normal_gates)
 
     scores = {
         "element_shape": _item(shape_score, shape_metrics, "Worst of minimum-angle and lower-tail mean-ratio mappings from the versioned profile.", shape_problems),
@@ -229,7 +235,7 @@ def analyze(mesh: dict[str, Any], geometry: dict[str, Any], sizing: dict[str, An
         "element_ids": {"minimum": int(eids.min()), "maximum": int(eids.max())},
     }
     return {"raw_metrics": raw, "scores": scores, "fatal_gates": fatal,
-            "quality_gate_status": "review_required" if any(g["code"] == "conformity_review_required" for g in fatal) else "fail" if fatal else "pass"}
+            "quality_gate_status": "review_required" if any(g["code"] in {"conformity_review_required", "outward_normals_review_required"} for g in fatal) else "fail" if fatal else "pass"}
 
 
 def _geometry_fidelity(mesh: dict[str, Any], xyz: np.ndarray, areas: np.ndarray, geometry: dict[str, Any],
