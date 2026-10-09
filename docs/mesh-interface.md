@@ -33,6 +33,8 @@ cd .\01_mesh_generator
 
 ## NAS 데이터 형식
 
+CAD volume 경계의 법선은 현재 삼각형과 CAD의 외향 방향을 발행 직전에 비교합니다. 방향이 뒤집히거나 판정이 모호하면 NAS를 발행하지 않습니다. cavity의 내벽도 솔리드 밖을 향하는 방향을 기준으로 검사하며 메시를 자동으로 뒤집지 않습니다. `topology_and_normals.metrics.outward_normals`에 검사 범위와 문제 요소를 기록합니다. CAD solid 정보가 없는 native mesh와 열린 sheet의 절대 방향은 `not_assessed` 범위이며 인접 winding 검사는 계속 수행합니다.
+
 생성기는 ASCII 자유 필드(punch) NAS 파일을 씁니다. 데이터 카드는 `GRID`, `CTRIA3`, 마지막의 단일 `ENDDATA`입니다. 주석에는 `$ length unit: <단위>`가 있습니다.
 
 - `GRID`: 양의 정수 노드 ID와 X/Y/Z 좌표. 좌표는 `output_unit`으로 기록됩니다.
