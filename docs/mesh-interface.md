@@ -124,6 +124,8 @@ AR는 1–3, 최소 내각은 20–60° 범위에서 더 엄격하게 설정할 
 
 Gmsh ONELAB의 BRL 트리에 형상 숫자·CAD 경로·단위·크기·품질 기준·개선·출력 설정이 나타납니다. `BRL/00 Action` 값을 바꾸면 실행한 뒤 0으로 돌아옵니다: 1 생성, 2 현재 메시 검사, 3 현재 메시 개선, 4 재검사 후 발행, 5 종료. Result에서 상태와 지표를, 후처리 뷰에서 AR 분포와 문제 위치를 확인하세요. 형상/단위/크기 설정 변경은 1로 재생성해야 합니다. CSG는 JSON CLI를 사용합니다.
 
+Action 1은 생성할 때마다 실행별 폴더에 자동 보존합니다. 추가 Action은 **6 실습 평판 프리셋**, **7 저장한 A와 동일 조건으로 B 재생성**, **8 저장 결과 A/B 비교**, **9 저장 목록 갱신**, **10 A 설정 불러오기**입니다. `Experiment`에서 결과를 고르고 비교 단위·좌표 허용오차를 지정합니다. 모양 기준 미달 메쉬도 `quality_warning`으로 보존·비교할 수 있으며 기존 NAS 발행 게이트는 유지합니다. [평판 실험 안내](plate-experiments.md)에 실제 UI 단계와 판정 정의가 있습니다.
+
 Gmsh File/Open으로 연 CAD는 먼저 Mesh 2D를 실행하고 2/4로 검사·발행합니다. 기존 MSH도 불러올 수 있습니다. 이 경로는 현재 좌표를 변환하지 않고 출력 단위로 해석하며, BRL 입력 단위 변환을 하지 않습니다. 파일의 실제 단위를 확인하세요. 한 표면의 복수 물리 그룹은 모호한 PID로 거부합니다. 모델·메시·설정 변경 후 이전 판정은 무효화하며, 4는 항상 현재 메시를 다시 검사합니다. Gmsh 자체 File/Save는 BRL 품질 게이트를 거치지 않습니다.
 
 ## Python 실행·세션 API
@@ -162,7 +164,7 @@ File/Open 등 기존 모델은 `session.adopt_current(configuration)`으로 채�
 
 브라우저 UI에서 `파장·크기만 비교하는 조건 사용`을 켜면 `mesh.controlled=true`로 실행합니다. 파장 ON/OFF와 최소·최대 크기 자동 계산 ON/OFF를 선택할 수 있습니다. 자동 계산은 bounding box 대각선 길이에 scale_fraction / minimum_size_fraction을 곱해 hMax / hMin을 정합니다. 자동 OFF는 출력 단위의 수동 hMin(minimum_size), hMax(target_size)를 사용합니다. 파장 ON은 균질·무손실 매질의 파장 / N으로 상한을 제한하며 hMin이 이보다 크면 함께 줄이고 이를 보고서에 기록합니다.
 
-비교 조건은 Mesh.Algorithm=6, Mesh.Smoothing=1, 곡률 제어=0, point·boundary 크기 전달=1, 1차 삼각형으로 고정합니다. 작은 특징·국소/Box field·narrowGap·element budget·추가 Relocate2D/Laplace2D 개선을 적용하지 않습니다. 실제 applied_options, candidate_rules, 제외된 제어, 생성 시간, code_commit/code_dirty를 보고서에 기록합니다. 비교 조건 OFF는 기존 경로를 사용하므로 기능별 순수 비교로 해석하지 않습니다.
+비교 조건의 기본은 Mesh.Algorithm=6, Mesh.Smoothing=1, 곡률 제어=0, point·boundary 크기 전달=1, 1차 삼각형입니다. 알고리즘 변경 실험에서는 `mesh.algorithm=5/6`을 명시할 수 있고 `mesh.random_seed`로 시드를 지정합니다. 작은 특징·국소/Box field·narrowGap·element budget·추가 Relocate2D/Laplace2D 개선을 적용하지 않습니다. 실제 applied_options, candidate_rules, 제외된 제어, 생성 시간, code_commit/code_dirty를 보고서에 기록합니다. 비교 조건 OFF는 기존 경로를 사용하므로 기능별 순수 비교로 해석하지 않습니다.
 
 `4개 사례 일괄 생성`은 현재 형상·단위·주파수·재료를 유지해 baseline(수동/OFF), waveOnly(수동/ON), autoSizeOnly(자동/OFF), combined(자동/ON)을 생성합니다. combined의 파일명 suffix는 생략합니다. 자동 ON 상태에서도 수동 hMin/hMax가 baseline에 필요합니다. CLI는 다음과 같습니다(01_mesh_generator에서 실행).
 

@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "name": "plate_experiment",
+  "naming": {
+    "automatic": false,
+    "source_name": null,
+    "case": ""
+  },
+  "output_dir": "outputs",
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "geometry": {
+    "kind": "plate",
+    "parameters": {
+      "length": 40,
+      "width": 30
+    }
+  },
+  "mesh": {
+    "mode": "fixed",
+    "controlled": true,
+    "algorithm": 6,
+    "random_seed": 1,
+    "minimum_size": 0.1,
+    "scale_fraction": 0.06,
+    "chord_tolerance_fraction": 0.002,
+    "small_feature_divisions": 2.5,
+    "minimum_size_fraction": 0.0005,
+    "user_size_cap": null,
+    "target_size": 3,
+    "growth_assessment_limit": 1.6,
+    "element_budget": null,
+    "budget_policy": "respect_features",
+    "narrow_gap": {
+      "enabled": false,
+      "max_fraction": 0.03,
+      "divisions": 3.0
+    },
+    "wave": {
+      "enabled": false,
+      "frequency_hz": null,
+      "elements_per_wavelength": 10.0,
+      "relative_permittivity": 1.0,
+      "relative_permeability": 1.0
+    },
+    "local": {
+      "enabled": false,
+      "feature_threshold_fraction": 0.25,
+      "near_size_fraction": 0.25,
+      "transition_fraction": 0.15,
+      "boxes": []
+    },
+    "improvement": {
+      "enabled": false,
+      "max_passes": 3,
+      "methods": [
+        "Relocate2D",
+        "Laplace2D"
+      ],
+      "fragment_surface_tags": []
+    }
+  },
+  "export": {
+    "pid_start": 1
+  },
+  "quality": {
+    "max_aspect_ratio": 3.0,
+    "min_angle_deg": 20.0,
+    "topology": {
+      "boundary_mode": "auto",
+      "absolute_tolerance": 0.0,
+      "relative_tolerance": 1e-10,
+      "protected_gap": null,
+      "separated_surface_pairs": [],
+      "max_candidate_tests": 2000000
+    }
+  }
+}

@@ -102,6 +102,12 @@ def prepare(configuration: dict) -> Context:
     if sizing["user_size_cap"] is not None and sizing["target_size"] > sizing["user_size_cap"] * (1+1e-12):
         raise ValueError("minimum size or budget conflicts with user_size_cap; revise explicit constraints")
     apply(sizing)
+    from .sizing import GMSH_DEFAULTS, record_options
+    if cfg["mesh"]["algorithm"] is not None:
+        gmsh.option.setNumber("Mesh.Algorithm", cfg["mesh"]["algorithm"])
+    gmsh.option.setNumber("Mesh.RandomSeed", cfg["mesh"]["random_seed"])
+    sizing["gmsh_defaults"] = dict(GMSH_DEFAULTS)
+    sizing["applied_options"] = record_options()
     membership, groups = assign_surface_groups(cfg["export"]["pid_start"])
     if tags:
         # One source group may produce several new faces; preserve its original PID.

@@ -43,7 +43,7 @@ def test_csg_cut_pipeline(tmp_path: Path):
         ]},
         "mesh": {"mode": "auto", "scale_fraction": 0.18, "chord_tolerance_fraction": 0.02},
     })
-    saved = json.loads((Path(report["output_directory"]) / "report.json").read_text())
+    saved = json.loads((Path(report["output_directory"]) / "report.json").read_text(encoding="utf-8"))
     assert saved["assessment"]["scores"]["geometry_fidelity"]["coverage"] == "not_assessed"
 
 

@@ -8,6 +8,18 @@ import gmsh
 
 METRES_PER_UNIT = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6}
 C0 = 299_792_458.0
+GMSH_DEFAULTS: dict[str, float] = {}
+RECORDED_OPTIONS = (
+    "Mesh.Algorithm", "Mesh.RandomSeed", "Mesh.RandomFactor", "Mesh.RandomFactor3D",
+    "Mesh.MeshSizeMin", "Mesh.MeshSizeMax", "Mesh.MeshSizeFactor", "Mesh.MeshSizeFromCurvature",
+    "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeExtendFromBoundary", "Mesh.ElementOrder",
+    "Mesh.RecombineAll", "Mesh.Smoothing", "Mesh.Optimize", "General.NumThreads",
+    "Mesh.MaxNumThreads1D", "Mesh.MaxNumThreads2D", "Mesh.MaxNumThreads3D",
+)
+
+
+def record_options() -> dict[str, float]:
+    return {name: gmsh.option.getNumber(name) for name in RECORDED_OPTIONS}
 
 CONTROLLED_OPTIONS = {
     "Mesh.MeshSizeFromCurvature": 0, "Mesh.MeshSizeFromPoints": 1,

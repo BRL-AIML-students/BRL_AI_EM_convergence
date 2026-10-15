@@ -4,6 +4,8 @@
 
 ## 실행
 
+평판 반복 생성·저장 결과 A/B 비교는 `run_plate_experiment.bat`으로 시작합니다. ONELAB의 Action **1 (A 생성·저장) → 7 (동일 조건 B 생성) → 8 (수치·시각 비교)**을 선택하세요. 40×30 mm, 목표 길이 3 mm는 변경 가능한 실습 프리셋입니다. [실제 UI 순서, 기본값/코드 위치와 검증 결과](../docs/plate-experiments.md)를 참고하세요.
+
 루트에서 설치를 마친 뒤 `run_ui.bat`을 실행합니다. 브라우저 UI에서 기본 형상 또는 STEP/STP/IGES/IGS/BREP CAD 파일을 선택하고 단위와 메시 크기 조건을 입력할 수 있습니다. 완료된 NAS 메시가 오른쪽 뷰어에 표시됩니다. UI는 `127.0.0.1`에서만 실행되며 종료 버튼이나 콘솔의 Ctrl+C로 닫습니다.
 
 Gmsh 기본 UI는 `run_gmsh_ui.bat`으로 실행합니다. ONELAB의 BRL 트리에서 형상 수치/CAD 파일과 기준을 지정하고 Action 1(생성), 2(검사), 3(개선), 4(발행), 5(종료)를 선택하세요. 선택적 JSON 설정을 실행 인수로 전달할 수 있습니다. 현재 메시의 수동 변경 후에는 다시 검사하며, 미통과 메시의 NAS는 발행하지 않습니다. 상세 계약은 [메시 인터페이스](../docs/mesh-interface.md#gmsh-기본-ui), 적용 기준과 참고문헌은 [메시 생성 기준](../docs/mesh-generation-guide.html)에 있습니다.
