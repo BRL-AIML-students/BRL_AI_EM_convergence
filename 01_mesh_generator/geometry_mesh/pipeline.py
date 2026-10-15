@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,20 +29,28 @@ def _profile() -> dict[str, Any]:
 
 
 def code_state() -> dict:
+    source_files={str(p.relative_to(Path(__file__).parent)):hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in sorted(Path(__file__).parent.rglob("*")) if p.suffix in {".py",".json",".html"}}
+    provenance={"source_sha256":hashlib.sha256(json.dumps(source_files,sort_keys=True).encode()).hexdigest(),
+                "source_file_sha256":source_files}
     try:
-        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
+        git = shutil.which("git") or "git"
+        result = subprocess.run([git, "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
                                 capture_output=True, text=True, timeout=5,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
+        dirty = subprocess.run([git, "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
                                capture_output=True, text=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return {"code_commit": result.stdout.strip() if result.returncode == 0 else None,
+        return {**provenance,"code_commit": result.stdout.strip() if result.returncode == 0 else None,
                 "code_dirty": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
     except (OSError, subprocess.TimeoutExpired):
-        return {"code_commit": None, "code_dirty": None}
+        return {**provenance,"code_commit": None, "code_dirty": None}
 
 
 def initialize() -> None:
     gmsh.initialize(readConfigFiles=False)
+    from .sizing import GMSH_DEFAULTS, record_options
+    GMSH_DEFAULTS.clear()
+    GMSH_DEFAULTS.update(record_options())
     gmsh.logger.start()
     gmsh.option.setNumber("General.Terminal", 0)
     gmsh.option.setNumber("General.NumThreads", 1)
@@ -102,11 +111,14 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
                 nas_path.unlink(missing_ok=True)
         gmsh.option.setNumber("Mesh.SaveAll", 1)
         gmsh.write(str(stage / "diagnostic.msh"))
+        from .experiments import preserve_snapshot
+        experiment = preserve_snapshot(stage, mesh, assessment)
         report = {
             "report_version": "2.0.0", "run_id": run_id,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "status": "invalid" if assessment["fatal_gates"] else "complete",
             "configuration": cfg,
+            "application_defaults": config_module.DEFAULTS,
             "units": {
                 "input_length_unit": cfg["length_unit"], "output_length_unit": cfg["output_unit"],
                 "explicit_scale": geometry["explicit_scale"],
@@ -116,8 +128,9 @@ def publish_current(context, improvement_history: list | None = None) -> dict:
             },
             "geometry": geometry, "sizing": sizing, "surface_groups": groups,
             "assessment": assessment, "score_profile": profile, "improvement_history": improvement_history or [],
-            "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "diagnostic_mesh": "diagnostic.msh", "report_json": "report.json", "quality_html": "quality_report.html"},
-            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "threads": 1, "read_config_files": False, **code_state()},
+            "experiment": experiment,
+            "artifacts": {"nas": f'{cfg["name"]}.nas' if nas_path.exists() else None, "diagnostic_mesh": "diagnostic.msh", "snapshot": "mesh_snapshot.npz", "report_json": "report.json", "quality_html": "quality_report.html"},
+            "environment": {"python": platform.python_version(), "gmsh": gmsh.__version__, "numpy": np.__version__, "platform": platform.platform(), "threads": 1, "read_config_files": False, **code_state()},
             "limitations": [
                 "Imported CAD, native opened models and boolean CSG geometry fidelity are not assessed because no robust analytic reference or trimmed-surface projection audit is implemented.",
                 "General triangle-face intersections are not assessed by the vertex-edge conformity audit.",
@@ -157,6 +170,10 @@ def run(configuration: dict[str, Any], progress: Callable[[str], None] | None = 
         report = publish_current(context, history)
         emit(f"published atomic output: {report['output_directory']}")
         return report
+    except Exception as exc:
+        from .experiments import save_failure
+        save_failure(cfg, exc, context.sizing if "context" in locals() else None)
+        raise
     finally:
         gmsh.logger.stop()
         gmsh.finalize()

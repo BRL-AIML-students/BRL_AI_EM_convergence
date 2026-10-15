@@ -10,6 +10,8 @@ Windows x64에서 처음 한 번은 인터넷 연결이 필요합니다. 저장�
 
 Gmsh 기본 UI를 사용하려면 `01_mesh_generator\run_gmsh_ui.bat`을 실행합니다. ONELAB의 BRL 트리에서 형상 숫자 또는 CAD 경로를 입력하고 Action을 선택합니다: **1 생성, 2 검사, 3 개선, 4 발행, 5 종료**. 기본 UI에서 열어 메싱한 모델도 검사할 수 있습니다. 자세한 단위·수동 편집·저장 계약은 [메시 인터페이스](docs/mesh-interface.md#gmsh-기본-ui)에 있습니다.
 
+평판 실험은 `01_mesh_generator\run_plate_experiment.bat`으로 시작합니다. **Action 1: A 생성·저장 → 7: 동일 조건 B 생성 → 8: A/B 비교**를 선택하면 좌표·연결의 동일성과 실제 길이/품질 분포를 수치·시각으로 확인할 수 있습니다. [실제 UI 절차, 설정 코드 위치와 검증 결과](docs/plate-experiments.md)를 참고하세요.
+
 정상 NAS는 모든 삼각형이 **Verdict형 AR ≤ 3, 최소 내각 ≥ 20°**와 연결·구조 게이트를 통과할 때 발행합니다. 확인된 T-junction은 허용하지 않으며 모호한 근접 후보도 검토 전에는 차단합니다. 실패 결과는 `diagnostic.msh`와 보고서로 조사할 수 있습니다. 이 기준은 기하 운영 정책이며 해석 정확도 보증값이 아닙니다.
 
 의존성 잠금 파일을 갱신한 뒤에는 루트의 `setup.bat`을 다시 실행합니다. 개발 의존성(테스트 도구)까지 설치하려면 PowerShell에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev`를 실행합니다. 저장소 폴더를 이동한 뒤에는 이전 `.venv`를 삭제하고 setup을 다시 실행해야 합니다.

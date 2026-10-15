@@ -22,6 +22,8 @@ DEFAULTS: dict[str, Any] = {
     "mesh": {
         "mode": "auto",
         "controlled": False,
+        "algorithm": None,
+        "random_seed": 1,
         "minimum_size": None,
         "scale_fraction": 0.06,
         "chord_tolerance_fraction": 0.002,
@@ -186,6 +188,10 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
     if unknown_mesh:
         raise ValueError(f"unknown mesh keys: {sorted(unknown_mesh)}")
     _choice(mesh["mode"], {"auto", "fixed"}, "mesh.mode")
+    if mesh["algorithm"] is not None and (type(mesh["algorithm"]) is not int or mesh["algorithm"] not in {5, 6}):
+        raise ValueError("mesh.algorithm must be null (BRL selection), 5 (Delaunay), or 6 (Frontal-Delaunay)")
+    if type(mesh["random_seed"]) is not int or not 0 <= mesh["random_seed"] <= 2147483647:
+        raise ValueError("mesh.random_seed must be an integer from 0 to 2147483647")
     if not isinstance(mesh["controlled"], bool):
         raise ValueError("mesh.controlled must be boolean")
     value = mesh["minimum_size"]
