@@ -34,10 +34,11 @@ def code_state() -> dict:
     provenance={"source_sha256":hashlib.sha256(json.dumps(source_files,sort_keys=True).encode()).hexdigest(),
                 "source_file_sha256":source_files}
     try:
-        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
+        git = shutil.which("git") or "git"
+        result = subprocess.run([git, "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2],
                                 capture_output=True, text=True, timeout=5,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
+        dirty = subprocess.run([git, "status", "--porcelain", "--untracked-files=no"], cwd=Path(__file__).resolve().parents[2],
                                capture_output=True, text=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return {**provenance,"code_commit": result.stdout.strip() if result.returncode == 0 else None,
                 "code_dirty": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
