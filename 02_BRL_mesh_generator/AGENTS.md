@@ -16,3 +16,10 @@
 - 로컬 구현과 통합 검증이 끝난 뒤 전체 변경을 모아 최종 GitHub PR을 준비한다. 원격 저장소는 사용자가 정하기 전까지 기존 원격을 자동 연결하지 않는다. Merge는 사용자가 명시적으로 지시한 때만 merge commit 방식으로 수행한다.
 - 사용자의 merge 지시에 따른 병합 성공을 확인한 후 해당 작업 branch를 로컬과 원격에서 정리한다. 그 전에는 branch를 삭제하지 않는다. 삭제 전 병합 결과·전환할 기본 branch·미병합 commit·사용자 변경·연결된 worktree를 확인하고 작업 branch만 삭제한다. 병합/검증 실패 또는 추가 작업이 남으면 삭제하지 않고 상태를 보고한다.
 - 활성 작업의 모델은 유지한다. 모델 변경이나 외부 모델 위임은 현재 사용자 지시와 상위 작업 지침을 따른다.
+
+## GitHub 전달 대상 (2026-10-20 사용자 지정)
+
+- 앞으로 수정·PR·merge 대상은 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`이다. 새 구현은 저장소의 `02_BRL_mesh_generator/`에 배치한다.
+- 이번 최종 PR에서 기존 `01_mesh_generator/` 전체와 구 실행·설치·개발 안내를 새 구현으로 대체한다. 기존 기능 호환 계층을 추가하지 않는다. 로컬 `99_archive`는 수정하지 않는다.
+- 로컬 단계별 개발 이력은 유지하고, 대상 저장소의 최신 main에서 전달 branch를 구성한다. 독립된 로컬 source 이력을 대상 main에 그대로 강제 push하지 않는다. 현재 전달 checkout은 `.cache/github-delivery`이며 Git 이력을 보존하는 subtree 통합을 사용한다.
+- PR 작성과 merge는 별도 작업이다. 명시적 merge 지시 전에는 병합하거나 branch를 삭제하지 않는다.

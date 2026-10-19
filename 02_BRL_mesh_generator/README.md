@@ -4,11 +4,11 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 ## 현재 상태
 
-2026-10-20: 0–6단계의 로컬 코어와 자동 통합 검증을 완료했습니다. native plate·ogive D/L/t, STEP/IGES/BREP, 공통 ONELAB·CLI, 특징별 크기장, 편차 feedback, 품질·topology·법선·rollback, 독립 NAS 검증을 연결했습니다. GitHub 대상 지정과 최종 PR·사용자 지시에 따른 merge는 아직 진행하지 않았습니다. native UI의 실제 event loop·Action 발행은 검증했고 마우스 조작·widget 외관의 시각 QA는 미실행입니다.
+2026-10-20: 0–6단계의 로컬 코어와 자동 통합 검증을 완료했습니다. native plate·ogive D/L/t, STEP/IGES/BREP, 공통 ONELAB·CLI, 특징별 크기장, 편차 feedback, 품질·topology·법선·rollback, 독립 NAS 검증을 연결했습니다. GitHub 대상은 [BRL_AI_EM_convergence](https://github.com/BRL-AIML-students/BRL_AI_EM_convergence)이며 기존 구현을 새 구현으로 교체하는 최종 PR을 준비합니다. Merge는 별도 사용자 지시에 따릅니다. native UI의 실제 event loop·Action 발행은 검증했고 마우스 조작·widget 외관의 시각 QA는 미실행입니다.
 
 - [재작성 계획](docs/rebuild-plan-ko.md)
 - [기존 BRL 보관 기록](docs/archive-record-ko.md)
-- [기존 통합 계획서](../99_archive/BRL_2026-10-19/docs/mesh-generator-refactor-plan-ko.md)
+- 기존 통합 계획서는 로컬 보관본 `99_archive/BRL_2026-10-19/docs/mesh-generator-refactor-plan-ko.md`에 있습니다. GitHub의 현재 구현 범위는 아래 재작성 계획을 따릅니다.
 - [1단계 구현·검증 기록](docs/stage-1-validation-ko.md)
 - [2단계 구현·검증 기록과 품질 정책 결정](docs/stage-2-validation-ko.md)
 - [3단계 CAD·ONELAB 검증 기록](docs/stage-3-validation-ko.md)

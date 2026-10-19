@@ -1,6 +1,8 @@
 # 최종 GitHub 전달 준비
 
-로컬 source: `C:\Users\user1\Documents\Codex\02_BRL_mesh_generator`, branch `codex/rebuild-core`. 현재 원격은 미등록이다. 보관 기록의 기존 remote는 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`이며 자동 재사용하지 않는다. 최종 저장소 URL과 배치 경로(루트/하위 폴더)를 먼저 확정한다.
+로컬 source: `C:\Users\user1\Documents\Codex\02_BRL_mesh_generator`, branch `codex/rebuild-core`.
+
+2026-10-20 사용자 지정: 앞으로 수정·PR·merge 대상은 [BRL_AI_EM_convergence](https://github.com/BRL-AIML-students/BRL_AI_EM_convergence)이다. 기존 `01_mesh_generator/`를 전부 삭제하고 새 `02_BRL_mesh_generator/`로 대체한다. 구 구현용 루트 설정·실행 안내도 교체한다. Git 이력과 로컬 archive는 보존한다. 전달 checkout은 `.cache/github-delivery`이며 대상 main 위에 로컬 source 이력을 squash 없이 subtree로 통합한다. Merge는 별도 지시를 기다린다.
 
 ## PR 초안
 
@@ -19,7 +21,7 @@
 
 ## 전달 절차
 
-1. 대상 저장소·배치 경로·기본 branch를 확인하고 최신 상태와 충돌을 검토한다. 대상의 기존 사용자 코드/자료를 임의 삭제하지 않는다. 소스만 전달하며 `.venv`, `.tools`, `.cache`, `outputs`는 제외한다.
+1. 대상 저장소·배치 경로·기본 branch를 확인하고 최신 상태와 충돌을 검토한다. 사용자가 교체하도록 지정한 기존 mesh generator와 그 전용 파일을 제거하고 무관한 파일은 보존한다. 소스만 전달하며 `.venv`, `.tools`, `.cache`, `outputs`는 제외한다.
 2. 의미 있는 로컬 개발 commit을 보존할 수 있는 배치/branch 방식을 정하고 최종 branch를 push한 후 위 범위와 실제 검증을 담은 PR 한 건을 만든다. 대상 배치로 코드가 바뀌면 필요한 검증을 다시 수행한다.
 3. Merge는 사용자의 명시적 지시에 따라 merge commit 방식으로 한다.
 4. 병합 성공·기본 branch·미병합 commit·사용자 변경·worktree 사용 여부를 확인한 후 해당 작업 branch를 로컬과 원격에서 삭제한다. 실패/미완료면 보존한다.
