@@ -27,3 +27,13 @@
 4. 병합 성공·기본 branch·미병합 commit·사용자 변경·worktree 사용 여부를 확인한 후 해당 작업 branch를 로컬과 원격에서 삭제한다. 실패/미완료면 보존한다.
 
 PR 대상 확정과 merge 지시는 서로 구분한다. 현재 문서는 PR 초안이며 원격 게시·병합 완료 기록이 아니다.
+
+## 대상 저장소 교체 검증 (2026-10-20)
+
+- 대상 기본 branch는 `main`, 확인한 기존 commit은 `3eb636c1be9c2c59103d8f67267686f80ed01659`이다.
+- `01_mesh_generator/` 전체와 구 구현 전용 루트 문서·설정은 제거했다. 새 구현은 `02_BRL_mesh_generator/`이며 루트 README·설치 wrapper·VS Code 작업 공간을 연결했다. 루트의 중복 pyproject·lock·Python 버전 파일은 제거하고 새 모듈 내부의 고정 환경을 사용한다.
+- 새 배치에서 전체 **300 passed in 316.63s**를 확인했다. 첫 실행은 pytest basetemp의 상위 폴더가 없어 실패했으며, `.cache/tests` 생성 후 전체를 다시 실행해 통과했다.
+- runtime·테스트·예제·개발 도구 60개 파일이 로컬 source와 바이트 단위로 일치했다. README 링크·workspace JSON·PowerShell 구문·설치 wrapper의 `-Dev`/`-UpdateLock` 전달·`git diff --check`를 확인했다. 설치 다운로드 전체는 이번 전달 checkout에서 재실행하지 않았다.
+- `.venv`·`.tools`·`.cache`·`outputs`는 게시하지 않는다. 테스트는 로컬 source의 고정 가상환경으로 새 배치에서 실행했다. 기존 Git 이력과 로컬 `99_archive`를 보존한다.
+- CLI credential manager 대기로 push dry-run을 중단했다. 연결된 GitHub API 게시 시 단계별 내용·commit 메시지는 유지하며 새 저장소 parent에 맞춰 commit SHA가 달라질 수 있다. 로컬 source의 원래 commit과 통합 이력은 그대로 보존한다.
+- Merge와 작업 branch 삭제는 아직 실행하지 않았다.

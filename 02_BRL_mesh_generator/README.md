@@ -166,6 +166,7 @@ ONELAB의 `BRL/Curvature`에서 활성화·절대/상대 편차·재생성 횟�
 
 ```powershell
 New-Item -ItemType Directory -Path .cache\tests -Force | Out-Null
+New-Item -ItemType Directory -Force .cache\tests | Out-Null
 .\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage6
 ```
 
