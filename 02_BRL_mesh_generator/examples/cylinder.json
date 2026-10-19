@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "cad", "path": "cad/cylinder.brep"},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {
+    "target_size": 0.7,
+    "curvature": {"absolute_tolerance": 0.02}
+  },
+  "output_dir": "../outputs"
+}

@@ -1,39 +1,35 @@
-# BRL 전자기 메시 도구
+# BRL 표면 메쉬 생성기
 
-CAD 형상에서 1차 삼각형 표면 메시를 만들고 NAS 파일과 품질 보고서를 생성하는 도구입니다. 브라우저 UI 또는 Gmsh 기본 UI에서 형상을 설정하고 결과를 확인할 수 있습니다.
+이 저장소의 mesh generator는 `02_BRL_mesh_generator/`입니다. 기존 `01_mesh_generator/`와 브라우저 UI·NAS viewer·품질 보고서 경로를 새 ONELAB·CLI 공통 코어로 대체했습니다. 기존 입력 형식과 Action 번호는 이어받지 않습니다. 이전 구현은 Git 이력에 보존되어 있습니다.
 
-## 빠른 시작 (Windows)
-
-Windows x64에서 처음 한 번은 인터넷 연결이 필요합니다. 저장소 루트에서 `setup.bat`을 실행하면 Python 3.12.14와 고정 버전 uv 0.12.20을 준비하고, `uv.lock` 기준으로 의존성을 설치합니다. uv는 같은 버전의 64비트 Python이 있으면 사용하고, 없으면 저장소 내부 `.tools`에 설치합니다. uv 실행 파일과 다운로드 캐시는 저장소의 `.tools`와 `.cache` 아래에 둡니다. 기존 Python 실행 파일을 지정할 경우 PowerShell에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -PythonExecutable 'C:\경로\python.exe'`를 실행합니다. 이 `.venv`는 BRL 전용이며 동료 프로젝트 환경에는 영향을 주지 않습니다.
-
-설치가 끝나면 `01_mesh_generator\run_ui.bat`을 실행하세요. 로컬 브라우저가 열리고, 기본 브라우저에서 형상 입력과 메시 생성 및 결과 확인을 할 수 있습니다. 서버를 끝낼 때는 UI의 종료 버튼을 사용하거나 실행 콘솔에서 Ctrl+C를 누릅니다. 메시 생성 결과와 CAD 입력 파일은 저장소의 Git 제외 경로에 보관됩니다.
-
-Gmsh 기본 UI를 사용하려면 `01_mesh_generator\run_gmsh_ui.bat`을 실행합니다. ONELAB의 BRL 트리에서 형상 숫자 또는 CAD 경로를 입력하고 Action을 선택합니다: **1 생성, 2 검사, 3 개선, 4 발행, 5 종료**. 기본 UI에서 열어 메싱한 모델도 검사할 수 있습니다. 자세한 단위·수동 편집·저장 계약은 [메시 인터페이스](docs/mesh-interface.md#gmsh-기본-ui)에 있습니다.
-
-정상 NAS는 모든 삼각형이 **Verdict형 AR ≤ 3, 최소 내각 ≥ 20°**와 연결·구조 게이트를 통과할 때 발행합니다. 확인된 T-junction은 허용하지 않으며 모호한 근접 후보도 검토 전에는 차단합니다. 실패 결과는 `diagnostic.msh`와 보고서로 조사할 수 있습니다. 이 기준은 기하 운영 정책이며 해석 정확도 보증값이 아닙니다.
-
-의존성 잠금 파일을 갱신한 뒤에는 루트의 `setup.bat`을 다시 실행합니다. 개발 의존성(테스트 도구)까지 설치하려면 PowerShell에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev`를 실행합니다. 저장소 폴더를 이동한 뒤에는 이전 `.venv`를 삭제하고 setup을 다시 실행해야 합니다.
-
-## VS Code
-
-`BRL.code-workspace`를 열면 저장소 작업 공간을 사용할 수 있습니다. 프로젝트 가상환경은 저장소 루트의 `.venv`에 생성됩니다. 이 환경은 이 저장소에서만 사용되며, 동료 프로젝트의 Python이나 패키지 설정에 영향을 주지 않습니다.
-
-## CLI
-
-`01_mesh_generator` 폴더에서 JSON 설정 파일을 실행합니다.
+## 설치·실행 (Windows x64)
 
 ```powershell
-..\.venv\Scripts\python.exe -m geometry_mesh.cli examples\plate_wave_local.json
+.\setup.bat
+cd 02_BRL_mesh_generator
+.\run_gmsh_ui.bat examples\plate.json
+# CLI
+.\run_cli.bat examples\ogive.json
 ```
 
-CLI는 결과 위치와 상태를 JSON으로 출력합니다. 프로필 및 NAS 형식은 [메시 인터페이스](docs/mesh-interface.md)를 참고하세요. 생성 기준·종횡비·연결 검사와 참고문헌은 [메시 생성 기준](docs/mesh-generation-guide.html)에 정리되어 있습니다.
+처음 설치는 인터넷이 필요합니다. Python 3.12.14·uv 0.12.20·Gmsh 4.15.2와 고정 의존성을 준비하며 환경·캐시는 새 모듈 내부에 둡니다. 개발 도구는 루트에서 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev`로 설치합니다. 기존 루트 `.venv`는 새 구현에서 사용하지 않습니다.
 
-## 개발과 협업
+ONELAB `BRL/00 Action`의 `Generate + publish NAS`는 생성·검사·필요한 개선·독립 NAS 읽기 검증을 실행합니다. 정상 산출물은 `outputs/run_<id>/mesh.nas` 한 파일입니다. 일반 Gmsh File/Export는 BRL의 발행 검사를 호출하지 않습니다.
 
-기본 테스트와 PR 협업 절차는 [개발 안내](docs/DEVELOPMENT.md)에 있습니다. 공개 대상은 이 저장소에서 제공하는 메시 생성기와 NAS 뷰어입니다.
+- [설정·ONELAB·CLI 사용법과 한계](02_BRL_mesh_generator/README.md)
+- [재작성 계획](02_BRL_mesh_generator/docs/rebuild-plan-ko.md)
+- [통합 검증](02_BRL_mesh_generator/docs/stage-6-validation-ko.md)
+- [GitHub 전달·협업](02_BRL_mesh_generator/docs/github-delivery-ko.md)
 
-## ogive와 비교 실험
+Native plate·ogive D/L/t와 STEP/IGES/BREP, 단위·PID, 특징별 크기장, CAD 편차 feedback, 품질·topology·법선·rollback 검사를 지원합니다. AR·최소각 등 기하 정책과 유한 표본 편차 검사는 EM 해석 정확도를 보증하지 않습니다. 자원 제한은 native 호출 전후의 협력적 검사입니다. UI 외관/마우스 시각 QA는 미실행입니다.
 
-형상 목록의 `ogive`에서 D, L, t를 입력하면 STEP 파일 없이 기존 원호·반회전 방식으로 형상을 생성합니다. t=0은 열린 곡면, t>0은 벽 두께 솔리드이며 메시 출력은 삼각형 표면입니다.
+## 개발
 
-UI 기본 결과 이름에는 형상 치수, 최종 hMin/hMax와 f/N을 표시합니다. 파장·크기 비교 조건에서 자동 계산과 파장 제한을 개별 선택하거나 `4개 사례 일괄 생성`으로 baseline, waveOnly, autoSizeOnly, 두 기능 적용 기준을 비교합니다. NAS 선택으로 뷰어를 전환할 수 있으며 품질 실패 사례는 보고서로 확인합니다. 자세한 설정과 CLI는 [메시 인터페이스](docs/mesh-interface.md#파장크기-비교-실험)를 참고하세요.
+`BRL.code-workspace`는 새 모듈을 엽니다. 자동 테스트는 모듈 폴더에서 실행합니다.
+
+```powershell
+New-Item -ItemType Directory -Force .cache\tests | Out-Null
+.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\local
+```
+
+앞으로 수정·PR·merge는 이 저장소를 대상으로 합니다. PR은 별도 branch에서 검증 후 만들고, merge는 사용자의 명시적 지시에 따라 merge commit으로 수행합니다. 성공과 미병합 변경·worktree를 확인한 후 해당 작업 branch를 정리합니다.

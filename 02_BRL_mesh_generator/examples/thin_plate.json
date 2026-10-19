@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "geometry": {
+    "kind": "plate",
+    "length": 10,
+    "width": 0.6
+  },
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {
+    "target_size": 1,
+    "local": {
+      "widths": {
+        "enabled": true,
+        "divisions": 3
+      }
+    }
+  },
+  "improvement": {
+    "enabled": true,
+    "max_passes": 3
+  },
+  "output_dir": "../outputs"
+}
