@@ -1,6 +1,6 @@
 # BRL mesh generator 재작성 계획
 
-작성일: 2026-10-19. 상태: 1·2단계 구현·로컬 검증 완료. CLI의 CAD 입력·ONELAB 등 3–6단계는 미완료.
+작성일: 2026-10-19. 상태: 0–3단계 구현·로컬 검증 완료. 특징별 크기장·곡률/자원 제어·통합 검증인 4–6단계는 미완료.
 
 ## 확정한 작업 위치
 
@@ -48,7 +48,7 @@
 
 ## Plugin·API·BRL의 책임
 
-아래 표의 계산 경로와 책임 분리는 최종 설계다. 2단계에서 ICN의 실제 개선 수용 연결, 일반화된 내부 topology·법선 검사, 개선/rollback을 구현했다. 기존 AR·최소각을 유지하는 정책으로 확정했으며 CLI의 일반 CAD 입력과 ONELAB 연결은 3단계다. Plugin이 제공하는 요소별 유효성·형상 정보를 전체 connectivity 또는 CAD outward normal의 보증으로 해석하지 않는다.
+아래 표의 계산 경로와 책임 분리는 최종 설계다. 2단계에서 ICN의 실제 개선 수용 연결, 일반화된 내부 topology·법선 검사, 개선/rollback을 구현했다. 기존 AR·최소각을 유지하는 정책으로 확정했으며 3단계에서 CLI의 STEP/IGES/BREP 입력과 같은 코어를 사용하는 ONELAB을 연결했다. Plugin이 제공하는 요소별 유효성·형상 정보를 전체 connectivity 또는 CAD outward normal의 보증으로 해석하지 않는다.
 
 | 항목 | 우선 활용 기능 | 필요한 BRL 연결·판정 코드 | 별도 검증 기준 |
 |---|---|---|---|
@@ -125,13 +125,13 @@
 | 5 | 편차 기반 곡률·필요 시 DiscretizationError feedback·자원 제한 | 원당 목표 200 초과 요구, 구·작은 필렛·ogive tip·미충족 처리; 요소 품질 Plugin 설계는 단계 1·2에서 검증 |
 | 6 | 통합 검증·기본 실행 경로 확정 | 단순·복잡 CAD, 정상/실패 NAS, 부가 산출물 없음, 문서·실행 경로 일치 |
 
-현재 완료 상태: 0–2단계 완료, 3–6단계 미착수. 원래 BRL 경로에 남은 접근 제한 캐시의 삭제는 미완료지만 보관된 소스와 새 프로젝트의 개발에는 영향을 주지 않는다. 이번 구현에서는 보관본·원래 캐시·권한을 변경하지 않았다.
+현재 완료 상태: 0–3단계 완료, 4–6단계 미착수. 원래 BRL 경로에 남은 접근 제한 캐시의 삭제는 미완료지만 보관된 소스와 새 프로젝트의 개발에는 영향을 주지 않는다. 이번 구현에서는 보관본·원래 캐시·권한을 변경하지 않았다.
 
 각 단계는 검증 가능한 크기로 나누어 구현하고 필요한 테스트·예제·UI/CLI·문서를 함께 관리한다. 단계 1이 동작하기 전에는 새 생성기가 완료됐다고 표현하지 않는다.
 
-CLI는 단일 판(+Z 기준)을 지원한다. 2단계에서는 내부 검사 코어를 box·sphere CAD 및 불량 topology 사례에서도 검증했다. CAD 파일 입력·ONELAB을 구현한 것으로 해석하지 않는다. [1단계 검증 기록](stage-1-validation-ko.md)과 [2단계 검증 기록](stage-2-validation-ko.md)에 각 시점의 범위와 제한을 구분한다.
+CLI/ONELAB은 직접 생성하는 단일 판(+Z)과 STEP/IGES/BREP 파일을 지원한다. 3단계에서 mixed BREP·단위·surface PID·열린 sheet 기준·solid 바깥 법선·현재 mesh 재검사를 연결했다. 추가 primitive 입력은 형상별 요구 검증과 함께 확장한다. [1단계](stage-1-validation-ko.md), [2단계](stage-2-validation-ko.md), [3단계](stage-3-validation-ko.md) 기록에 각 시점의 범위와 제한을 구분한다.
 
-현재 개선 설정은 `improvement.enabled=true`, `max_passes=3`이 기본이며 max_passes는 0–10 정수다. 개선을 꺼도 필수 검사와 NAS 발행 차단은 유지한다. topology 기대 경계·연결 성분·분리 의도 및 sheet 방향은 내부 계약으로 명시하며, CLI에서 이를 임의로 추정하거나 검사를 생략하지 않는다. 3단계에서 CAD/UI 입력과 연결한다.
+현재 개선 설정은 `improvement.enabled=true`, `max_passes=3`이 기본이며 max_passes는 0–10 정수다. 개선을 꺼도 필수 검사와 NAS 발행 차단은 유지한다. topology 기대 경계와 연결 성분은 관측된 삼각형의 구멍 대신 CAD 경계·surface adjacency에서 구성한다. 분리 의도와 sheet 방향은 CAD schema/ONELAB 입력과 연결했으며 필요한 검사를 생략하지 않는다. 설정·CAD source SHA256·CAD topology/기하 fingerprint·Physical Group/PID·point/curve mesh 경계의 생성 참조가 바뀌면 재생성을 요구한다. 현재 mesh의 검사는 발행 직전에 다시 수행한다.
 
 ### 로컬 개발과 최종 GitHub 처리
 

@@ -65,8 +65,8 @@ def check_shape(mesh: SurfaceMesh) -> ShapeValues:
 def check_plate_geometry(mesh: SurfaceMesh, config: Configuration) -> None:
     """Only the configured plane/extent/area, not topology or normal orientation."""
     mesh.validate()
-    origin = np.asarray(config.plate.origin) * config.unit_scale
-    length, width = config.plate.length * config.unit_scale, config.plate.width * config.unit_scale
+    origin = np.asarray(config.geometry.origin) * config.unit_scale
+    length, width = config.geometry.length * config.unit_scale, config.geometry.width * config.unit_scale
     size = max(length, width)
     relative = (mesh.coordinates - origin) / size
     lx, ly, tolerance = length / size, width / size, 1e-9

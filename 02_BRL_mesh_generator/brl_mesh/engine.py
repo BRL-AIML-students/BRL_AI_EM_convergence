@@ -10,45 +10,88 @@ import uuid
 import gmsh
 
 from . import nas
+from .cad import CadReference, build_geometry
 from .checks import check_plate_geometry
-from .config import Configuration
-from .errors import ConfigurationError, MeshBlocked
+from .config import CadFile, Configuration, Plate
 from .improvement import Attempt, improve
 from .inspection import MeshContract, cad_boundary_intent, inspect_mesh
 from .model import SurfaceMesh, snapshot, assert_current
+from .errors import MeshBlocked
+
+
+def boundary_state() -> tuple:
+    result = []
+    for dim in (0, 1):
+        for _, tag in sorted(gmsh.model.getEntities(dim)):
+            types, ids, nodes = gmsh.model.mesh.getElements(dim, tag)
+            node_ids, coordinates, parameters = gmsh.model.mesh.getNodes(dim, tag)
+            result.append((dim, tag, tuple(map(int, types)), tuple(tuple(map(int, b)) for b in ids),
+                           tuple(tuple(map(int, b)) for b in nodes), tuple(map(int, node_ids)),
+                           tuple(coordinates), tuple(parameters)))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class Scene:
+    cad: CadReference
+    contract: MeshContract
+    fixed_boundary: tuple
+
+    @property
+    def membership(self) -> dict[int, int]:
+        return dict(self.cad.membership)
+
+    def require_current(self, config: Configuration) -> None:
+        self.cad.require_current(config)
+        if boundary_state() != self.fixed_boundary:
+            raise MeshBlocked('CAD point/curve mesh가 생성 시점과 다릅니다. 다시 생성하세요')
+
+
+def configure_mesh(config: Configuration) -> None:
+    gmsh.option.setNumber('General.Terminal', 0)
+    gmsh.option.setNumber('General.NumThreads', 1)
+    for dimension in (1, 2, 3):
+        gmsh.option.setNumber(f'Mesh.MaxNumThreads{dimension}D', 1)
+    for key, value in {'RandomSeed': 1, 'Algorithm': 6, 'ElementOrder': 1, 'RecombineAll': 0,
+                       'MeshSizeFromPoints': 0, 'MeshSizeFromCurvature': 0,
+                       'MeshSizeExtendFromBoundary': 0, 'MeshSizeMin': config.target_size,
+                       'MeshSizeMax': config.target_size}.items():
+        gmsh.option.setNumber('Mesh.' + key, value)
+
+
+def generate(config: Configuration) -> Scene:
+    """Build in an owned, empty session; shared by the CLI and native UI."""
+    if gmsh.model.getEntities():
+        raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
+    configure_mesh(config)
+    reference = build_geometry(config)
+    for face, sign in reference.sheet_signs.items():
+        gmsh.model.mesh.setReverse(2, face, sign < 0)
+    gmsh.model.mesh.generate(2)
+    fixed_boundary = boundary_state()
+    def geometry_check(mesh):
+        reference.require_current(config)
+        if boundary_state() != fixed_boundary:
+            raise MeshBlocked('CAD point/curve mesh가 생성 시점과 다릅니다. 다시 생성하세요')
+        if isinstance(config.geometry, Plate):
+            check_plate_geometry(mesh, config)
+    options = {}
+    if isinstance(config.geometry, CadFile):
+        options = {'separated_surfaces': config.geometry.separated_surfaces,
+                   'protected_gap': config.geometry.protected_gap}
+    contract = MeshContract(cad_boundary_intent(reference.components, **options), reference.sheet_signs,
+                            config.target_size, geometry_check)
+    return Scene(reference, contract, fixed_boundary)
 
 
 @contextmanager
-def plate_model(config: Configuration):
+def mesh_model(config: Configuration):
     """Own one Gmsh session; never clear a model owned by another caller."""
     if gmsh.isInitialized():
-        raise RuntimeError("기존 Gmsh session이 있습니다. 독립 프로세스에서 실행하세요")
+        raise RuntimeError('기존 Gmsh session이 있습니다. 독립 프로세스에서 실행하세요')
     gmsh.initialize(readConfigFiles=False)
     try:
-        gmsh.option.setNumber('General.Terminal', 0)
-        gmsh.option.setNumber('General.NumThreads', 1)
-        for dimension in (1, 2, 3):
-            gmsh.option.setNumber(f'Mesh.MaxNumThreads{dimension}D', 1)
-        gmsh.option.setNumber('Mesh.RandomSeed', 1)
-        gmsh.option.setNumber('Mesh.Algorithm', 6)
-        gmsh.option.setNumber('Mesh.ElementOrder', 1)
-        gmsh.option.setNumber('Mesh.RecombineAll', 0)
-        gmsh.option.setNumber('Mesh.MeshSizeFromPoints', 0)
-        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 0)
-        gmsh.option.setNumber('Mesh.MeshSizeExtendFromBoundary', 0)
-        gmsh.option.setNumber('Mesh.MeshSizeMin', config.target_size)
-        gmsh.option.setNumber('Mesh.MeshSizeMax', config.target_size)
-        gmsh.model.add('BRL_plate')
-        x, y, z = (v * config.unit_scale for v in config.plate.origin)
-        length, width = config.plate.length * config.unit_scale, config.plate.width * config.unit_scale
-        if x + length <= x or y + width <= y:
-            raise ConfigurationError("좌표 정밀도 범위에서 판의 길이/폭을 표현할 수 없습니다")
-        face = gmsh.model.occ.addRectangle(x, y, z, length, width)
-        gmsh.model.occ.synchronize()
-        gmsh.model.addPhysicalGroup(2, [face], 1)
-        gmsh.model.setPhysicalName(2, 1, 'plate')
-        gmsh.model.mesh.generate(2)
-        yield {face: 1}
+        yield generate(config)
     finally:
         gmsh.finalize()
 
@@ -61,22 +104,12 @@ class RunResult:
     attempts: tuple[Attempt, ...] = ()
 
 
-def plate_contract(config: Configuration, membership: dict[int, int]) -> MeshContract:
-    if len(membership) != 1 or set(membership.values()) != {1}:
-        raise MeshBlocked('현재 CLI는 PID=1의 단일 판만 지원합니다')
-    for surface in membership:
-        if set(map(int, gmsh.model.getPhysicalGroupsForEntity(2, surface))) != {1}:
-            raise MeshBlocked('현재 판의 Physical Group/PID가 변경됐습니다')
-    return MeshContract(cad_boundary_intent(1), {surface: 1 for surface in membership}, config.target_size,
-                        lambda mesh: check_plate_geometry(mesh, config))
-
-
-def publish(mesh: SurfaceMesh, config: Configuration) -> RunResult:
-    """Publish one NAS after required checks, without overwriting previous runs."""
+def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
+    """Reinspect the current mesh against its generation reference before output."""
     assert_current(mesh)
-    membership = {int(surface): int(mesh.pids[mesh.surface_tags == surface][0]) for surface in set(mesh.surface_tags)}
-    current = snapshot(membership)
-    inspect_mesh(current, plate_contract(config, membership)).require_pass()
+    scene.require_current(config)
+    current = snapshot(scene.membership)
+    inspect_mesh(current, scene.contract).require_pass()
     config.output_dir.mkdir(parents=True, exist_ok=True)
     run_name = 'run_' + uuid.uuid4().hex
     stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
@@ -84,7 +117,6 @@ def publish(mesh: SurfaceMesh, config: Configuration) -> RunResult:
     try:
         nas.write(stage / 'mesh.nas', current, config.output_unit)
         nas.validate(stage / 'mesh.nas', current)
-        # Same-volume directory rename makes only the verified file visible as a run.
         stage.rename(final)
         return RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
     finally:
@@ -93,7 +125,7 @@ def publish(mesh: SurfaceMesh, config: Configuration) -> RunResult:
 
 
 def run(config: Configuration) -> RunResult:
-    with plate_model(config) as membership:
-        prepared = improve(membership, plate_contract(config, membership), config.improvement)
+    with mesh_model(config) as scene:
+        prepared = improve(scene.membership, scene.contract, config.improvement)
         prepared.inspection.require_pass()
-        return replace(publish(prepared.mesh, config), attempts=prepared.attempts)
+        return replace(publish(prepared.mesh, config, scene), attempts=prepared.attempts)

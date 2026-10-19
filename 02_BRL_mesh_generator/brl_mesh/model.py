@@ -61,6 +61,8 @@ def snapshot(surface_pid: dict[int, int], *, check_validity: bool = True) -> Sur
         if surface not in surface_pid:
             raise MeshBlocked("분류되지 않은 CAD surface가 있습니다")
         types, element_blocks, node_blocks = gmsh.model.mesh.getElements(2, surface)
+        if not any(len(elements) for elements in element_blocks):
+            raise MeshBlocked(f'CAD surface {surface}의 삼각형이 누락됐습니다')
         for element_type, elements, nodes in zip(types, element_blocks, node_blocks):
             if not len(elements):
                 continue

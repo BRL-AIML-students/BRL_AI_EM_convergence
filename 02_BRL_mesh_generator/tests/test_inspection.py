@@ -3,7 +3,7 @@ from dataclasses import replace
 import gmsh
 import pytest
 
-from brl_mesh.engine import plate_model, plate_contract, publish
+from brl_mesh.engine import mesh_model, publish
 from brl_mesh.errors import MeshBlocked
 from brl_mesh.inspection import MeshContract, cad_boundary_intent, inspect_mesh
 from brl_mesh.model import snapshot
@@ -21,7 +21,8 @@ def test_icn_single_threshold_cannot_reproduce_retained_policy():
 
 
 def test_stale_snapshot_never_gets_new_metrics_or_published(config):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
         nodes, xyz, _ = gmsh.model.mesh.getNodes(2, next(iter(membership)))
         node, point = int(nodes[0]), xyz[:3]
@@ -29,14 +30,15 @@ def test_stale_snapshot_never_gets_new_metrics_or_published(config):
         with pytest.raises(MeshBlocked, match='snapshot'):
             read_icn(mesh)
         with pytest.raises(MeshBlocked, match='snapshot'):
-            publish(mesh, config)
+            publish(mesh, config, scene)
     assert not config.output_dir.exists()
 
 
 def test_missing_boundary_intent_and_plugin_failure_block(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
-        contract = plate_contract(config, membership)
+        contract = scene.contract
         incomplete = replace(contract, boundary=replace(contract.boundary, expected_edges=None))
         with pytest.raises(MeshBlocked, match='boundary_intent_missing'):
             inspect_mesh(mesh, incomplete).require_pass()
@@ -46,7 +48,7 @@ def test_missing_boundary_intent_and_plugin_failure_block(config, monkeypatch):
 
 
 @pytest.mark.parametrize('kind', ['box', 'sphere'])
-def test_full_closed_solid_contract_without_cli_import_support(kind):
+def test_full_closed_solid_contract(kind):
     with cad_mesh(kind) as membership:
         contract = MeshContract(cad_boundary_intent(1), {}, .35)
         result = inspect_mesh(snapshot(membership), contract)

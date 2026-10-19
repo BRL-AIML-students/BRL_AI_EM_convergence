@@ -54,6 +54,15 @@ class Plate:
 
 
 @dataclass(frozen=True)
+class CadFile:
+    path: Path
+    sheet_normal: int | None = None
+    sheet_normals: tuple[tuple[int, int], ...] = ()
+    separated_surfaces: frozenset[tuple[int, int]] = frozenset()
+    protected_gap: float | None = None
+
+
+@dataclass(frozen=True)
 class Improvement:
     enabled: bool = True
     max_passes: int = 3
@@ -65,7 +74,7 @@ class Improvement:
 
 @dataclass(frozen=True)
 class Configuration:
-    plate: Plate
+    geometry: Plate | CadFile
     length_unit: str
     output_unit: str
     target_size: float
@@ -76,22 +85,33 @@ class Configuration:
     def unit_scale(self) -> float:
         return UNIT_METRES[self.length_unit] / UNIT_METRES[self.output_unit]
 
+    def to_dict(self) -> dict:
+        geometry = self.geometry
+        if isinstance(geometry, Plate):
+            value = {'kind': 'plate', 'length': geometry.length, 'width': geometry.width,
+                     'origin': list(geometry.origin)}
+        else:
+            value = {'kind': 'cad', 'path': str(geometry.path)}
+            if geometry.sheet_normal is not None:
+                value['sheet_normal'] = geometry.sheet_normal
+            if geometry.sheet_normals:
+                value['sheet_normals'] = {str(k): v for k, v in geometry.sheet_normals}
+            if geometry.separated_surfaces:
+                value['separated_surfaces'] = [list(pair) for pair in sorted(geometry.separated_surfaces)]
+            if geometry.protected_gap is not None:
+                value['protected_gap'] = geometry.protected_gap
+        return {'schema_version': 1, 'geometry': value, 'length_unit': self.length_unit,
+                'output_unit': self.output_unit, 'mesh': {'target_size': self.target_size},
+                'improvement': {'enabled': self.improvement.enabled, 'max_passes': self.improvement.max_passes},
+                'output_dir': str(self.output_dir)}
+
     @classmethod
     def from_dict(cls, value: object, base_dir: Path | None = None) -> Configuration:
         root = _object(value, {"schema_version", "geometry", "length_unit", "output_unit", "mesh", "output_dir", "improvement"},
                        {"schema_version", "geometry", "mesh"}, "configuration")
         if type(root["schema_version"]) is not int or root["schema_version"] != 1:
             raise ConfigurationError("schema_version: 현재 지원하는 버전은 정수 1입니다")
-        geometry = _object(root["geometry"], {"kind", "length", "width", "origin"},
-                           {"kind", "length", "width"}, "geometry")
-        if geometry["kind"] != "plate":
-            raise ConfigurationError("현재 CLI에서는 geometry.kind=plate만 지원합니다")
-        origin = geometry.get("origin", [0, 0, 0])
-        if not isinstance(origin, (list, tuple)) or len(origin) != 3:
-            raise ConfigurationError("geometry.origin: 좌표 3개가 필요합니다")
-        plate = Plate(_number(geometry["length"], "geometry.length", positive=True),
-                      _number(geometry["width"], "geometry.width", positive=True),
-                      tuple(_number(x, "geometry.origin") for x in origin))
+        geometry = _geometry(root['geometry'], base_dir or Path.cwd())
         mesh = _object(root["mesh"], {"target_size"}, {"target_size"}, "mesh")
         improvement = _object(root.get('improvement', {}), {'enabled', 'max_passes'}, set(), 'improvement')
         enabled, passes = improvement.get('enabled', True), improvement.get('max_passes', 3)
@@ -101,14 +121,15 @@ class Configuration:
         output_path = Path(output)
         if not output_path.is_absolute():
             output_path = (base_dir or Path.cwd()) / output_path
-        config = cls(plate, _unit(root.get("length_unit", "mm"), "length_unit"),
+        config = cls(geometry, _unit(root.get("length_unit", "mm"), "length_unit"),
                      _unit(root.get("output_unit", "mm"), "output_unit"),
                      _number(mesh["target_size"], "mesh.target_size", positive=True), output_path.resolve(),
                      Improvement(enabled, passes))
-        scaled = [plate.length * config.unit_scale, plate.width * config.unit_scale,
-                  *(x * config.unit_scale for x in plate.origin)]
-        if not all(math.isfinite(x) for x in scaled) or min(scaled[:2]) <= 0:
-            raise ConfigurationError("단위 변환 결과가 유효하지 않습니다")
+        if isinstance(geometry, Plate):
+            scaled = [geometry.length * config.unit_scale, geometry.width * config.unit_scale,
+                      *(x * config.unit_scale for x in geometry.origin)]
+            if not all(math.isfinite(x) for x in scaled) or min(scaled[:2]) <= 0:
+                raise ConfigurationError("단위 변환 결과가 유효하지 않습니다")
         return config
 
     @classmethod
@@ -119,3 +140,59 @@ class Configuration:
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ConfigurationError(f"설정 파일을 읽을 수 없습니다: {exc}") from exc
         return cls.from_dict(value, source.parent)
+
+
+def _sign(value: object, name: str) -> int:
+    if type(value) is not int or value not in (-1, 1):
+        raise ConfigurationError(f'{name}: CAD parameter normal에 대한 정수 +1/-1이 필요합니다')
+    return value
+
+
+def _surface_id(value: object) -> int:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal() or value != str(int(value)) or int(value) < 1:
+        raise ConfigurationError('sheet_normals: key는 양의 surface tag 문자열이어야 합니다')
+    return int(value)
+
+
+def _geometry(value: object, base: Path) -> Plate | CadFile:
+    if not isinstance(value, dict):
+        raise ConfigurationError('geometry: object가 필요합니다')
+    if value.get('kind') == 'plate':
+        geometry = _object(value, {'kind', 'length', 'width', 'origin'}, {'kind', 'length', 'width'}, 'geometry')
+        origin = geometry.get('origin', [0, 0, 0])
+        if not isinstance(origin, (list, tuple)) or len(origin) != 3:
+            raise ConfigurationError('geometry.origin: 좌표 3개가 필요합니다')
+        return Plate(_number(geometry['length'], 'geometry.length', positive=True),
+                     _number(geometry['width'], 'geometry.width', positive=True),
+                     tuple(_number(x, 'geometry.origin') for x in origin))
+    if value.get('kind') != 'cad':
+        raise ConfigurationError('geometry.kind: plate 또는 cad를 사용하세요')
+    geometry = _object(value, {'kind', 'path', 'sheet_normal', 'sheet_normals', 'separated_surfaces', 'protected_gap'},
+                       {'kind', 'path'}, 'geometry')
+    path = geometry['path']
+    if not isinstance(path, str) or not path.strip():
+        raise ConfigurationError('geometry.path: CAD 경로 문자열이 필요합니다')
+    source = (base / path).resolve()
+    if source.suffix.lower() not in {'.step', '.stp', '.iges', '.igs', '.brep'} or not source.is_file():
+        raise ConfigurationError('geometry.path: 존재하는 STEP/IGES/BREP 파일이 필요합니다')
+    default = _sign(geometry['sheet_normal'], 'sheet_normal') if 'sheet_normal' in geometry else None
+    normals = geometry.get('sheet_normals', {})
+    if not isinstance(normals, dict):
+        raise ConfigurationError('sheet_normals: surface tag와 +1/-1의 object가 필요합니다')
+    signs = tuple(sorted((_surface_id(k), _sign(v, 'sheet_normals')) for k, v in normals.items()))
+    pairs = geometry.get('separated_surfaces', [])
+    if not isinstance(pairs, list):
+        raise ConfigurationError('separated_surfaces: surface tag 쌍의 배열이 필요합니다')
+    normalized = set()
+    for pair in pairs:
+        if (not isinstance(pair, list) or len(pair) != 2 or
+                any(type(tag) is not int or tag < 1 for tag in pair) or pair[0] == pair[1]):
+            raise ConfigurationError('separated_surfaces: 서로 다른 양의 정수 surface tag 2개가 필요합니다')
+        key = tuple(sorted(pair))
+        if key in normalized:
+            raise ConfigurationError('separated_surfaces: 중복 쌍입니다')
+        normalized.add(key)
+    gap = _number(geometry['protected_gap'], 'protected_gap', positive=True) if 'protected_gap' in geometry else None
+    if gap is not None and not normalized:
+        raise ConfigurationError('protected_gap: separated_surfaces 지정이 필요합니다')
+    return CadFile(source, default, signs, frozenset(normalized), gap)

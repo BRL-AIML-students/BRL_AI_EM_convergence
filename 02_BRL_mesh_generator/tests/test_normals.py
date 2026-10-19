@@ -4,7 +4,7 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh.engine import plate_model
+from brl_mesh.engine import mesh_model
 from brl_mesh.model import snapshot
 from brl_mesh.normals import inspect_normals
 from tests.support import cad_mesh
@@ -28,7 +28,8 @@ def test_solid_classification_corrects_reversed_cad_parameter_normals(monkeypatc
 
 
 def test_open_sheet_requires_explicit_reference_and_checks_direction(config):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
         missing = inspect_normals(mesh, {})
         assert any(x.status == 'incomplete' for x in missing.issues)
@@ -37,7 +38,8 @@ def test_open_sheet_requires_explicit_reference_and_checks_direction(config):
 
 
 def test_projection_failure_is_not_success(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         def unavailable(*_):
             raise RuntimeError('projection unavailable')
         monkeypatch.setattr(gmsh.model, 'getClosestPoint', unavailable)
@@ -46,7 +48,8 @@ def test_projection_failure_is_not_success(config, monkeypatch):
 
 
 def test_nodes_off_cad_surface_are_blocked(config):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
         xyz = mesh.coordinates.copy()
         xyz[0, 2] += .01

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from brl_mesh.config import Improvement
-from brl_mesh.engine import plate_model, plate_contract, publish
+from brl_mesh.engine import mesh_model, publish
 from brl_mesh.errors import MeshBlocked
 from brl_mesh.improvement import improve
 from brl_mesh.inspection import MeshContract, cad_boundary_intent, inspect_mesh
@@ -28,10 +28,11 @@ def assert_exact_state(before):
 
 
 def test_real_relocate_improves_without_changing_structure(config):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         before = snapshot(membership)
-        contract = plate_contract(config, membership)
+        contract = scene.contract
         old = inspect_mesh(before, contract)
         assert old.shape.violating_count > 0 and not old.issues
         result = improve(membership, contract, Improvement(True, 3))
@@ -65,7 +66,8 @@ def test_real_closed_solid_relocation_preserves_area_volume():
 
 
 def test_second_pass_can_use_real_laplace(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         optimize, calls = gmsh.model.mesh.optimize, []
         def skip_first(method, **kwargs):
@@ -73,18 +75,19 @@ def test_second_pass_can_use_real_laplace(config, monkeypatch):
             if len(calls) > 1:
                 return optimize(method, **kwargs)
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', skip_first)
-        result = improve(membership, plate_contract(config, membership), Improvement(True, 2))
+        result = improve(membership, scene.contract, Improvement(True, 2))
         assert calls == ['Relocate2D', 'Laplace2D']
         assert result.attempts[0].rolled_back
         result.inspection.require_pass()
 
 
 def test_maximum_passes_are_bounded_when_nothing_improves(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         calls = []
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', lambda method, **kwargs: calls.append(method))
-        result = improve(membership, plate_contract(config, membership), Improvement(True, 3))
+        result = improve(membership, scene.contract, Improvement(True, 3))
         assert len(calls) == 3 and len(result.attempts) == 3
         assert all(a.rolled_back for a in result.attempts)
         with pytest.raises(MeshBlocked):
@@ -93,7 +96,8 @@ def test_maximum_passes_are_bounded_when_nothing_improves(config, monkeypatch):
 
 @pytest.mark.parametrize('damage', ['worse', 'degenerate', 'off_cad', 'fixed_node'])
 def test_bad_candidate_restores_coordinates_parameters_and_classification(config, monkeypatch, damage):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         node, original, target = distort_interior(membership)
         before = snapshot(membership)
         state = node_state()
@@ -110,7 +114,7 @@ def test_bad_candidate_restores_coordinates_parameters_and_classification(config
                 return
             gmsh.model.mesh.setNode(node, point.tolist(), state[node][1].tolist())
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', bad_candidate)
-        result = improve(membership, plate_contract(config, membership), Improvement(True, 1))
+        result = improve(membership, scene.contract, Improvement(True, 1))
         assert len(result.attempts) == 1 and result.attempts[0].rolled_back
         assert_exact_state(state)
         assert np.array_equal(result.mesh.coordinates, before.coordinates)
@@ -120,7 +124,8 @@ def test_bad_candidate_restores_coordinates_parameters_and_classification(config
 
 @pytest.mark.parametrize('change', ['connectivity', 'lower_connectivity', 'physical_group', 'entity'])
 def test_structure_change_blocks_instead_of_approximating_rollback(config, monkeypatch, change):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         face = next(iter(membership))
         def change_structure(*args, **kwargs):
@@ -136,12 +141,13 @@ def test_structure_change_blocks_instead_of_approximating_rollback(config, monke
                 gmsh.model.occ.synchronize()
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', change_structure)
         with pytest.raises(MeshBlocked, match='연결|PID|entity'):
-            improve(membership, plate_contract(config, membership), Improvement(True, 1))
+            improve(membership, scene.contract, Improvement(True, 1))
     assert not config.output_dir.exists()
 
 
 def test_optimizer_exception_after_partial_move_restores_then_blocks(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         node, _, _ = distort_interior(membership)
         state = node_state()
         def fail(*args, **kwargs):
@@ -149,12 +155,13 @@ def test_optimizer_exception_after_partial_move_restores_then_blocks(config, mon
             raise RuntimeError('optimizer interrupted')
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', fail)
         with pytest.raises(MeshBlocked, match='개선 실행 실패'):
-            improve(membership, plate_contract(config, membership), Improvement(True, 1))
+            improve(membership, scene.contract, Improvement(True, 1))
         assert_exact_state(state)
 
 
 def test_failed_rollback_blocks_output(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         node, original, target = distort_interior(membership)
         set_node = gmsh.model.mesh.setNode
         restoring = []
@@ -168,12 +175,13 @@ def test_failed_rollback_blocks_output(config, monkeypatch):
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', bad_candidate)
         monkeypatch.setattr(gmsh.model.mesh, 'setNode', fail_restore)
         with pytest.raises(MeshBlocked, match='rollback 실패'):
-            improve(membership, plate_contract(config, membership), Improvement(True, 1))
+            improve(membership, scene.contract, Improvement(True, 1))
     assert not config.output_dir.exists()
 
 
 def test_failed_candidate_measurement_never_publishes_and_cleans_views(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         state = node_state()
         run = gmsh.plugin.run
@@ -185,19 +193,20 @@ def test_failed_candidate_measurement_never_publishes_and_cleans_views(config, m
                 raise RuntimeError('candidate ICN unavailable')
             return run(name)
         monkeypatch.setattr(gmsh.plugin, 'run', interrupted)
-        result = improve(membership, plate_contract(config, membership), Improvement(True, 1))
+        result = improve(membership, scene.contract, Improvement(True, 1))
         assert result.attempts[0].rolled_back
         assert_exact_state(state)
         assert set(gmsh.view.getTags()) == {retained}
         with pytest.raises(MeshBlocked):
-            publish(result.mesh, config)
+            publish(result.mesh, config, scene)
     assert not config.output_dir.exists()
 
 
 def test_topology_incomplete_never_calls_optimizer(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
-        contract = plate_contract(config, membership)
+        contract = scene.contract
         contract = replace(contract, boundary=replace(contract.boundary, expected_edges=None))
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', lambda *a, **k: pytest.fail('must not relocate topology failure'))
         with pytest.raises(MeshBlocked, match='boundary_intent_missing'):
@@ -205,11 +214,12 @@ def test_topology_incomplete_never_calls_optimizer(config, monkeypatch):
 
 
 def test_disabled_improvement_keeps_failure_and_is_not_success(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         state = node_state()
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', lambda *a, **k: pytest.fail('improvement is disabled'))
-        result = improve(membership, plate_contract(config, membership), Improvement(False, 3))
+        result = improve(membership, scene.contract, Improvement(False, 3))
         assert not result.attempts
         assert_exact_state(state)
         with pytest.raises(MeshBlocked):
@@ -217,18 +227,20 @@ def test_disabled_improvement_keeps_failure_and_is_not_success(config, monkeypat
 
 
 def test_publication_rechecks_after_an_earlier_success(config):
-    with plate_model(config) as membership:
-        inspect_mesh(snapshot(membership), plate_contract(config, membership)).require_pass()
+    with mesh_model(config) as scene:
+        membership = scene.membership
+        inspect_mesh(snapshot(membership), scene.contract).require_pass()
         gmsh.model.mesh.reverse([(2, next(iter(membership)))])
         with pytest.raises(MeshBlocked, match='inward_normal'):
-            publish(snapshot(membership), config)
+            publish(snapshot(membership), config, scene)
     assert not config.output_dir.exists()
 
 
 @pytest.mark.parametrize('metric', ['size', 'gradation', 'centroid', 'node', 'area', 'volume'])
 def test_improved_shape_does_not_hide_preservation_regressions(config, monkeypatch, metric):
     import brl_mesh.improvement as module
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         distort_interior(membership)
         state = node_state()
         inspect = module.inspect_mesh
@@ -253,6 +265,6 @@ def test_improved_shape_does_not_hide_preservation_regressions(config, monkeypat
                     result = replace(result, geometry=replace(result.geometry, volume_relative_error_max=.1))
             return result
         monkeypatch.setattr(module, 'inspect_mesh', degraded_evidence)
-        result = improve(membership, plate_contract(config, membership), Improvement(True, 1))
+        result = improve(membership, scene.contract, Improvement(True, 1))
         assert result.attempts[0].rolled_back
         assert_exact_state(state)

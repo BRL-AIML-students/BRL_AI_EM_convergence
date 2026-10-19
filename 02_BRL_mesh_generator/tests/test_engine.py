@@ -24,7 +24,8 @@ def test_generation_repeats_without_overwriting_and_only_publishes_nas(config):
 
 def test_unit_conversion_is_applied_to_geometry(config):
     config = replace(config, output_unit='m', target_size=0.00025)
-    with engine.plate_model(config) as membership:
+    with engine.mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
     assert np.ptp(mesh.coordinates, axis=0) == pytest.approx([0.001, 0.001, 0])
 
@@ -38,9 +39,10 @@ def test_failed_independent_validation_preserves_prior_output_and_cleans_stage(c
         called.append(True)
         raise MeshBlocked('independent reader failure')
     monkeypatch.setattr(nas, 'validate', fail)
-    with engine.plate_model(config) as membership:
+    with engine.mesh_model(config) as scene:
+        membership = scene.membership
         with pytest.raises(MeshBlocked, match='independent reader failure'):
-            engine.publish(snapshot(membership), config)
+            engine.publish(snapshot(membership), config, scene)
     assert called == [True]
     assert old_file.read_text(encoding='ascii') == 'previous result'
     assert list(config.output_dir.iterdir()) == [old_file.parent]

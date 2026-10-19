@@ -2,7 +2,7 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh.engine import plate_model
+from brl_mesh.engine import mesh_model
 from brl_mesh.errors import MeshBlocked
 from brl_mesh.model import snapshot
 from brl_mesh.quality import read_icn
@@ -33,7 +33,8 @@ def test_plugin_maps_sparse_element_ids_and_preserves_views_visibility(square):
 
 
 def test_plugin_failure_cleans_only_its_views(config, monkeypatch):
-    with plate_model(config) as membership:
+    with mesh_model(config) as scene:
+        membership = scene.membership
         mesh = snapshot(membership)
         retained = gmsh.view.add('keep')
         before_visibility = gmsh.model.mesh.getVisibility(mesh.element_ids)
