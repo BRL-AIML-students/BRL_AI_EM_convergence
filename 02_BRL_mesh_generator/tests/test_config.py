@@ -40,3 +40,12 @@ def test_duplicate_json_key_is_not_silently_overwritten(tmp_path):
     path.write_text('{"schema_version":1,"schema_version":2}', encoding='utf-8')
     with pytest.raises(ConfigurationError, match='중복'):
         Configuration.load(path)
+
+
+@pytest.mark.parametrize('settings', [
+    {'enabled': 1}, {'max_passes': True}, {'max_passes': -1}, {'max_passes': 11},
+    {'max_passes': 1.5}, {'methods': ['Smooth']},
+])
+def test_invalid_improvement_controls_are_rejected(settings):
+    with pytest.raises(ConfigurationError):
+        Configuration.from_dict(BASE | {'improvement': settings})

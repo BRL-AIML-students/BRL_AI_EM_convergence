@@ -1,11 +1,11 @@
-"""Element-ID-based ICN adapter. Stage 1 probes it before choosing a new policy."""
+"""Plugin ICN measurement for validity and improvement decisions; no scoring."""
 from __future__ import annotations
 
 import gmsh
 import numpy as np
 
 from .errors import MeshBlocked
-from .model import SurfaceMesh
+from .model import SurfaceMesh, assert_current
 
 
 def read_icn(mesh: SurfaceMesh) -> dict[int, float]:
@@ -15,6 +15,7 @@ def read_icn(mesh: SurfaceMesh) -> dict[int, float]:
     orientation check. Call only for a snapshot of the current Gmsh model.
     """
     mesh.validate()
+    assert_current(mesh)
     existing_views = set(map(int, gmsh.view.getTags()))
     visibility = gmsh.model.mesh.getVisibility(mesh.element_ids.tolist())
     try:

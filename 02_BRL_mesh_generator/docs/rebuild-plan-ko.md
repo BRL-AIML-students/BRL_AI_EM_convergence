@@ -1,6 +1,6 @@
 # BRL mesh generator 재작성 계획
 
-작성일: 2026-10-19. 상태: 1단계 단일 판용 최소 코어 구현·로컬 검증 완료. 2–6단계는 미완료.
+작성일: 2026-10-19. 상태: 1·2단계 구현·로컬 검증 완료. CLI의 CAD 입력·ONELAB 등 3–6단계는 미완료.
 
 ## 확정한 작업 위치
 
@@ -48,7 +48,7 @@
 
 ## Plugin·API·BRL의 책임
 
-아래 표의 계산 경로와 책임 분리는 최종 설계다. 1단계에서는 단일 판용 기존 형상 정책과 NAS 출력, ICN adapter의 소규모 동작을 구현했다. 일반 CAD의 검사·개선 및 ICN 중심 판정 정책은 아직 확정·구현하지 않았다. Plugin이 제공하는 요소별 유효성·형상 정보를 전체 connectivity 또는 CAD outward normal의 보증으로 해석하지 않는다.
+아래 표의 계산 경로와 책임 분리는 최종 설계다. 2단계에서 ICN의 실제 개선 수용 연결, 일반화된 내부 topology·법선 검사, 개선/rollback을 구현했다. 기존 AR·최소각을 유지하는 정책으로 확정했으며 CLI의 일반 CAD 입력과 ONELAB 연결은 3단계다. Plugin이 제공하는 요소별 유효성·형상 정보를 전체 connectivity 또는 CAD outward normal의 보증으로 해석하지 않는다.
 
 | 항목 | 우선 활용 기능 | 필요한 BRL 연결·판정 코드 | 별도 검증 기준 |
 |---|---|---|---|
@@ -72,9 +72,11 @@
 4. ICN 중심으로 바꾸면 누락되는 실패 유형이 없는지 검증하고 새로운 기준·적용 범위·실패 처리를 확정한다. 그 후 불필요해진 AR·최소각 경로를 제거한다. 이는 과거 입력/반환값 호환 계층을 유지하는 작업과 구분한다.
 5. 단계 2의 완료 조건에 품질 정책과 계산 경로 확정을 포함한다. 개발 비교는 제품의 점수화·비교 일괄 생성 기능으로 제공하지 않는다.
 
+**2단계 결정:** Gmsh 4.15.2에서 104개 삼각형을 비교했다. 기존 기준에 통과한 사례의 ICN은 약 0.438인데 탈락한 다른 사례의 ICN은 약 0.533이었다. 따라서 단일 ICN 하한으로 기존 수용 집합을 보존할 수 없다. AR ≤ 3·최소각 ≥ 20°를 유지하고, Plugin ICN은 유효 결과 확인과 개선 후보의 최소 ICN 비악화/상승 판단에 사용한다. 임의의 새 ICN 품질 임계값을 만들지 않는다. IGE·Jacobian 경로는 현재 소비자가 없어 채택하지 않는다. 이 비교와 Plugin/API 선택 근거는 [2단계 기록](stage-2-validation-ko.md)에 남긴다.
+
 ### 표면 메쉬용 Plugin 호출·결과 읽기 설계
 
-공식 동작의 근거는 [Gmsh 4.15.2 AnalyseMeshQuality 설명](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028AnalyseMeshQuality_0029)이다. 아래는 최종 설계다. ICN만 사용하는 adapter의 ID 대응·재계산·임시 view 정리·표시 상태 보존은 1단계 소규모 검증 대상이며, Jacobian/IGE 경로와 ICN 중심 판정 임계값은 미구현·미확정이다.
+공식 동작의 근거는 [Gmsh 4.15.2 AnalyseMeshQuality 설명](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028AnalyseMeshQuality_0029)이다. ICN adapter의 ID 대응·재계산·임시 view 정리·표시 상태 보존과 실제 개선 연결은 검증했다. Jacobian/IGE는 현재 사용하지 않으며 아래 해당 설명은 향후 필요할 때 지켜야 할 해석 기준이다.
 
 | 옵션·단계 | 적용 설계 |
 |---|---|
@@ -123,11 +125,13 @@
 | 5 | 편차 기반 곡률·필요 시 DiscretizationError feedback·자원 제한 | 원당 목표 200 초과 요구, 구·작은 필렛·ogive tip·미충족 처리; 요소 품질 Plugin 설계는 단계 1·2에서 검증 |
 | 6 | 통합 검증·기본 실행 경로 확정 | 단순·복잡 CAD, 정상/실패 NAS, 부가 산출물 없음, 문서·실행 경로 일치 |
 
-현재 완료 상태: 0·1단계 완료, 2–6단계 미착수. 원래 BRL 경로에 남은 접근 제한 캐시의 삭제는 미완료지만 보관된 소스와 새 프로젝트의 개발에는 영향을 주지 않는다. 이번 구현에서는 보관본·원래 캐시·권한을 변경하지 않았다.
+현재 완료 상태: 0–2단계 완료, 3–6단계 미착수. 원래 BRL 경로에 남은 접근 제한 캐시의 삭제는 미완료지만 보관된 소스와 새 프로젝트의 개발에는 영향을 주지 않는다. 이번 구현에서는 보관본·원래 캐시·권한을 변경하지 않았다.
 
 각 단계는 검증 가능한 크기로 나누어 구현하고 필요한 테스트·예제·UI/CLI·문서를 함께 관리한다. 단계 1이 동작하기 전에는 새 생성기가 완료됐다고 표현하지 않는다.
 
-현재 1단계는 단일 판(+Z 기준)의 좁은 범위로 구현한다. 기존 AR ≤ 3·최소각 ≥ 20°를 score 없이 출력 차단에 사용하고, ICN은 개발용 adapter 검증에서 측정한다. 새 정책 확정 전에 기존 조건을 없애거나 ICN 차단을 중복 추가하지 않는다. 일반 CAD 검사·정책 전환·개선/rollback은 2단계 이후의 작업이다. [1단계 검증 기록](stage-1-validation-ko.md)에 실제 완료 여부와 제한을 남긴다.
+CLI는 단일 판(+Z 기준)을 지원한다. 2단계에서는 내부 검사 코어를 box·sphere CAD 및 불량 topology 사례에서도 검증했다. CAD 파일 입력·ONELAB을 구현한 것으로 해석하지 않는다. [1단계 검증 기록](stage-1-validation-ko.md)과 [2단계 검증 기록](stage-2-validation-ko.md)에 각 시점의 범위와 제한을 구분한다.
+
+현재 개선 설정은 `improvement.enabled=true`, `max_passes=3`이 기본이며 max_passes는 0–10 정수다. 개선을 꺼도 필수 검사와 NAS 발행 차단은 유지한다. topology 기대 경계·연결 성분·분리 의도 및 sheet 방향은 내부 계약으로 명시하며, CLI에서 이를 임의로 추정하거나 검사를 생략하지 않는다. 3단계에서 CAD/UI 입력과 연결한다.
 
 ### 로컬 개발과 최종 GitHub 처리
 
@@ -163,7 +167,7 @@ AR·최소각의 기존 운영 조건을 유지할 경우 그 근거와 적용 �
 
 [기존 통합 계획서](../../99_archive/BRL_2026-10-19/docs/mesh-generator-refactor-plan-ko.md)의 최종 범위를 이어받는다. 기존 코드를 순서대로 삭제하는 이전 구현 절차는 위 재작성 절차로 대체한다. 새 폴더명과 보관 경로는 사용자의 2026-10-19 지시에 따른다.
 
-2026-10-19 side conversation의 사용자 요청으로 Plugin의 요소 품질 계산, 별도 topology·법선 검사, BRL 판정·개선 제어의 책임을 본 설계에 반영했다. 공식 문서는 기능 범위의 근거다. 이후 수행한 1단계 ICN adapter 검증은 새 판정 임계값 확정 또는 일반 CAD 검사 완료를 뜻하지 않는다.
+2026-10-19 side conversation의 사용자 요청으로 Plugin의 요소 품질 계산, 별도 topology·법선 검사, BRL 판정·개선 제어의 책임을 본 설계에 반영했다. 공식 문서는 기능 범위의 근거이며, 실제 2단계 구현·정책 결정·검증 범위는 해당 검증 기록으로 구분한다.
 
 - [Gmsh 4.15.2 AnalyseMeshQuality](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028AnalyseMeshQuality_0029): 제공 measure·model-based view·표시 숨김·재계산 옵션의 근거.
 - [getElementQualities](https://gmsh.info/doc/texinfo/gmsh.html#index-gmsh_002fmodel_002fmesh_002fgetElementQualities), [getModelData](https://gmsh.info/doc/texinfo/gmsh.html#index-gmsh_002fview_002fgetModelData): 자동화 경로·ID 대응 검증 시 참고할 공식 API 설명.

@@ -29,15 +29,19 @@ def test_unit_conversion_is_applied_to_geometry(config):
     assert np.ptp(mesh.coordinates, axis=0) == pytest.approx([0.001, 0.001, 0])
 
 
-def test_failed_independent_validation_preserves_prior_output_and_cleans_stage(config, square, monkeypatch):
+def test_failed_independent_validation_preserves_prior_output_and_cleans_stage(config, monkeypatch):
     old_file = config.output_dir / 'previous' / 'mesh.nas'
     old_file.parent.mkdir(parents=True)
     old_file.write_text('previous result', encoding='ascii')
+    called = []
     def fail(*_):
+        called.append(True)
         raise MeshBlocked('independent reader failure')
     monkeypatch.setattr(nas, 'validate', fail)
-    with pytest.raises(MeshBlocked):
-        engine.publish(square, config)
+    with engine.plate_model(config) as membership:
+        with pytest.raises(MeshBlocked, match='independent reader failure'):
+            engine.publish(snapshot(membership), config)
+    assert called == [True]
     assert old_file.read_text(encoding='ascii') == 'previous result'
     assert list(config.output_dir.iterdir()) == [old_file.parent]
 
@@ -58,3 +62,16 @@ def test_cli_success_and_invalid_input_have_minimal_json_state(tmp_path):
                              capture_output=True, text=True, encoding='utf-8', env=environment)
     assert invalid.returncode == 1 and not invalid.stdout
     assert json.loads(invalid.stderr)['status'] == 'error'
+
+
+def test_cli_disabled_improvement_still_blocks_bad_shape(tmp_path):
+    source = tmp_path / 'thin.json'
+    source.write_text(json.dumps({'schema_version': 1,
+        'geometry': {'kind': 'plate', 'length': 1, 'width': .01},
+        'mesh': {'target_size': .25}, 'improvement': {'enabled': False},
+        'output_dir': 'blocked-output'}), encoding='utf-8')
+    result = subprocess.run([sys.executable, '-m', 'brl_mesh', str(source)],
+                            capture_output=True, text=True, encoding='utf-8', env=os.environ | {'PYTHONUTF8': '1'})
+    assert result.returncode == 2 and not result.stdout
+    assert json.loads(result.stderr)['status'] == 'blocked'
+    assert not (tmp_path / 'blocked-output').exists()

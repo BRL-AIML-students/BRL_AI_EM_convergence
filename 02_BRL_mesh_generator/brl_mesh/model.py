@@ -17,6 +17,10 @@ class SurfaceMesh:
     pids: np.ndarray
     surface_tags: np.ndarray
 
+    def same_structure(self, other: SurfaceMesh) -> bool:
+        return all(np.array_equal(getattr(self, name), getattr(other, name)) for name in
+                   ('node_ids', 'element_ids', 'connectivity', 'pids', 'surface_tags'))
+
     def triangles(self) -> np.ndarray:
         return self.coordinates[np.searchsorted(self.node_ids, self.connectivity)]
 
@@ -51,7 +55,7 @@ class SurfaceMesh:
             raise MeshBlocked("퇴화 또는 수치 범위를 초과한 삼각형이 있습니다")
 
 
-def snapshot(surface_pid: dict[int, int]) -> SurfaceMesh:
+def snapshot(surface_pid: dict[int, int], *, check_validity: bool = True) -> SurfaceMesh:
     blocks = []
     for _, surface in sorted(gmsh.model.getEntities(2)):
         if surface not in surface_pid:
@@ -80,5 +84,21 @@ def snapshot(surface_pid: dict[int, int]) -> SurfaceMesh:
     if np.any(indices >= len(node_ids)) or not np.array_equal(node_ids[indices], used):
         raise MeshBlocked("생성 메쉬에 누락된 node 참조가 있습니다")
     mesh = SurfaceMesh(used, coordinates[indices], elements[order], conn[order], pids[order], surfaces[order])
-    mesh.validate()
+    if check_validity:
+        mesh.validate()
     return mesh
+
+
+def assert_current(mesh: SurfaceMesh) -> None:
+    """Reject stale coordinates, connectivity, IDs or surface classification."""
+    if not gmsh.isInitialized():
+        raise MeshBlocked('현재 Gmsh model이 없습니다')
+    membership = {}
+    for surface in set(map(int, mesh.surface_tags)):
+        pids = np.unique(mesh.pids[mesh.surface_tags == surface])
+        if len(pids) != 1:
+            raise MeshBlocked('한 surface의 PID 분류가 유일하지 않습니다')
+        membership[surface] = int(pids[0])
+    current = snapshot(membership)
+    if not current.same_structure(mesh) or not np.array_equal(current.coordinates, mesh.coordinates):
+        raise MeshBlocked('검사 대상 snapshot이 현재 메쉬와 일치하지 않습니다')

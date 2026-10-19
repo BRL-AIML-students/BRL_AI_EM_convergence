@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import shutil
 import tempfile
@@ -10,10 +10,12 @@ import uuid
 import gmsh
 
 from . import nas
-from .checks import check_plate
+from .checks import check_plate_geometry
 from .config import Configuration
-from .errors import ConfigurationError
-from .model import SurfaceMesh, snapshot
+from .errors import ConfigurationError, MeshBlocked
+from .improvement import Attempt, improve
+from .inspection import MeshContract, cad_boundary_intent, inspect_mesh
+from .model import SurfaceMesh, snapshot, assert_current
 
 
 @contextmanager
@@ -56,18 +58,32 @@ class RunResult:
     nas_path: Path
     node_count: int
     triangle_count: int
+    attempts: tuple[Attempt, ...] = ()
+
+
+def plate_contract(config: Configuration, membership: dict[int, int]) -> MeshContract:
+    if len(membership) != 1 or set(membership.values()) != {1}:
+        raise MeshBlocked('현재 CLI는 PID=1의 단일 판만 지원합니다')
+    for surface in membership:
+        if set(map(int, gmsh.model.getPhysicalGroupsForEntity(2, surface))) != {1}:
+            raise MeshBlocked('현재 판의 Physical Group/PID가 변경됐습니다')
+    return MeshContract(cad_boundary_intent(1), {surface: 1 for surface in membership}, config.target_size,
+                        lambda mesh: check_plate_geometry(mesh, config))
 
 
 def publish(mesh: SurfaceMesh, config: Configuration) -> RunResult:
     """Publish one NAS after required checks, without overwriting previous runs."""
-    check_plate(mesh, config)
+    assert_current(mesh)
+    membership = {int(surface): int(mesh.pids[mesh.surface_tags == surface][0]) for surface in set(mesh.surface_tags)}
+    current = snapshot(membership)
+    inspect_mesh(current, plate_contract(config, membership)).require_pass()
     config.output_dir.mkdir(parents=True, exist_ok=True)
     run_name = 'run_' + uuid.uuid4().hex
     stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
     final = config.output_dir / run_name
     try:
-        nas.write(stage / 'mesh.nas', mesh, config.output_unit)
-        nas.validate(stage / 'mesh.nas', mesh)
+        nas.write(stage / 'mesh.nas', current, config.output_unit)
+        nas.validate(stage / 'mesh.nas', current)
         # Same-volume directory rename makes only the verified file visible as a run.
         stage.rename(final)
         return RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
@@ -78,4 +94,6 @@ def publish(mesh: SurfaceMesh, config: Configuration) -> RunResult:
 
 def run(config: Configuration) -> RunResult:
     with plate_model(config) as membership:
-        return publish(snapshot(membership), config)
+        prepared = improve(membership, plate_contract(config, membership), config.improvement)
+        prepared.inspection.require_pass()
+        return replace(publish(prepared.mesh, config), attempts=prepared.attempts)

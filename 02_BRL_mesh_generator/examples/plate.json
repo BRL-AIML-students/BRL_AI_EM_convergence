@@ -4,5 +4,6 @@
   "length_unit": "mm",
   "output_unit": "mm",
   "mesh": { "target_size": 10 },
+  "improvement": { "enabled": true, "max_passes": 3 },
   "output_dir": "../outputs"
 }
