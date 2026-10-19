@@ -29,6 +29,31 @@ def action(controller, code):
     return gmsh.onelab.getString(ui.STATUS)[0]
 
 
+def test_curvature_resources_controls_roundtrip_and_invalidation(config):
+    from brl_mesh.sizing_config import Curvature
+    from brl_mesh.resources import Resources
+    configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(.001, .002, 2, 7, 13)),
+                         resources=Resources(max_seconds=25, max_projection_samples=100000))
+    gmsh.initialize(readConfigFiles=False)
+    try:
+        gmsh.option.setNumber('General.Terminal', 0)
+        controller = ui.Controller(configured, configured.output_dir.parent)
+        assert ui.read_controls(configured, configured.output_dir.parent) == configured
+        assert json.loads(gmsh.onelab.get(ui.ABS_ENABLED))['choices'] == [0, 1]
+        assert 'ready' in action(controller, 2)
+        gmsh.onelab.setNumber(ui.CURV_ITERATIONS, [3])
+        controller.invalidate_if_changed()
+        assert controller.scene is None
+        assert 'Blocked:' in action(controller, 4)
+        gmsh.onelab.setNumber(ui.CURVATURE_ENABLED, [0])
+        assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature is None
+        gmsh.onelab.setNumber(ui.RESOURCE_CONTROLS['max_triangles'], [1])
+        assert 'resource_mesh_limit' in action(controller, 1)
+        assert not configured.output_dir.exists()
+    finally:
+        gmsh.finalize()
+
+
 def test_native_and_cli_share_exact_output_and_idle_never_duplicates(config):
     expected = run(config).nas_path.read_bytes()
     gmsh.initialize(readConfigFiles=False)

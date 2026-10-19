@@ -100,6 +100,7 @@ def _acceptable(before: Inspection, after: Inspection) -> bool:
     preserved = all(_not_increased(old, new) for old, new in (
         (before.edge_max_to_target, after.edge_max_to_target),
         (before.local_edge_max_to_target, after.local_edge_max_to_target),
+        (before.deviation_ratio_max, after.deviation_ratio_max),
         (before.topology.adjacent_size_ratio_max, after.topology.adjacent_size_ratio_max)))
     noise = max(before.coordinate_noise, after.coordinate_noise)
     geometry_preserved = all(_not_increased(old, new, noise) for old, new in (

@@ -7,7 +7,6 @@ import subprocess
 import sys
 
 from .config import Configuration
-from .engine import run
 from .errors import ConfigurationError, MeshBlocked
 
 PROTOCOL = 'BRL_RESULT '
@@ -15,6 +14,7 @@ PROTOCOL = 'BRL_RESULT '
 
 def execute(configuration: str) -> tuple[int, dict]:
     try:
+        from .engine import run
         result = run(Configuration.load(configuration))
         return 0, {'status': 'ok', 'nas_path': str(result.nas_path)}
     except MeshBlocked as exc:

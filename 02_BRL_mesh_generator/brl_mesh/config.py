@@ -8,6 +8,7 @@ from pathlib import Path
 from .errors import ConfigurationError
 from .schema import object_value as _object, number as _number
 from .sizing_config import Sizing, parse_sizing
+from .resources import Resources
 
 UNIT_METRES = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6}
 
@@ -62,6 +63,7 @@ class Configuration:
     output_dir: Path
     improvement: Improvement = Improvement()
     sizing: Sizing = Sizing()
+    resources: Resources = Resources()
 
     @property
     def unit_scale(self) -> float:
@@ -82,14 +84,17 @@ class Configuration:
                 value['separated_surfaces'] = [list(pair) for pair in sorted(geometry.separated_surfaces)]
             if geometry.protected_gap is not None:
                 value['protected_gap'] = geometry.protected_gap
-        return {'schema_version': 1, 'geometry': value, 'length_unit': self.length_unit,
+        result = {'schema_version': 1, 'geometry': value, 'length_unit': self.length_unit,
                 'output_unit': self.output_unit, 'mesh': self.sizing.to_dict(self.target_size),
                 'improvement': {'enabled': self.improvement.enabled, 'max_passes': self.improvement.max_passes},
                 'output_dir': str(self.output_dir)}
+        if self.resources != Resources():
+            result['resources'] = self.resources.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, value: object, base_dir: Path | None = None) -> Configuration:
-        root = _object(value, {"schema_version", "geometry", "length_unit", "output_unit", "mesh", "output_dir", "improvement"},
+        root = _object(value, {"schema_version", "geometry", "length_unit", "output_unit", "mesh", "output_dir", "improvement", "resources"},
                        {"schema_version", "geometry", "mesh"}, "configuration")
         if type(root["schema_version"]) is not int or root["schema_version"] != 1:
             raise ConfigurationError("schema_version: 현재 지원하는 버전은 정수 1입니다")
@@ -105,7 +110,8 @@ class Configuration:
             output_path = (base_dir or Path.cwd()) / output_path
         config = cls(geometry, _unit(root.get("length_unit", "mm"), "length_unit"),
                      _unit(root.get("output_unit", "mm"), "output_unit"),
-                     target, output_path.resolve(), Improvement(enabled, passes), sizing)
+                     target, output_path.resolve(), Improvement(enabled, passes), sizing,
+                     Resources.parse(root.get('resources', {})))
         if isinstance(geometry, Plate):
             scaled = [geometry.length * config.unit_scale, geometry.width * config.unit_scale,
                       *(x * config.unit_scale for x in geometry.origin)]

@@ -56,11 +56,21 @@ class LocalSizing:
 
 
 @dataclass(frozen=True)
+class Curvature:
+    absolute_tolerance: float | None = None
+    relative_tolerance: float | None = None
+    max_iterations: int = 3
+    sampling_nodes: int = 10
+    verification_nodes: int = 19
+
+
+@dataclass(frozen=True)
 class Sizing:
     wave: Wave | None = None
     fallback_fraction: float = .1
     minimum_size: float | None = None
     local: LocalSizing = LocalSizing()
+    curvature: Curvature | None = None
 
     def to_dict(self, target):
         result = {}
@@ -74,6 +84,8 @@ class Sizing:
             result['fallback_fraction'] = self.fallback_fraction
         if self.local != LocalSizing():
             result['local'] = _json_value(asdict(self.local))
+        if self.curvature is not None:
+            result['curvature'] = _json_value(asdict(self.curvature))
         return result
 
 
@@ -112,7 +124,7 @@ def _rule(value, name):
 
 
 def parse_sizing(value):
-    mesh = obj(value, {'target_size', 'wave', 'fallback_fraction', 'minimum_size', 'local'}, set(), 'mesh')
+    mesh = obj(value, {'target_size', 'wave', 'fallback_fraction', 'minimum_size', 'local', 'curvature'}, set(), 'mesh')
     target = number(mesh['target_size'], 'target_size', positive=True) if 'target_size' in mesh else None
     wave = None
     if 'wave' in mesh:
@@ -161,4 +173,20 @@ def parse_sizing(value):
                            integer(local.get('max_sampling', 4096), 'max_sampling', 8, 100000),
                            integer(local.get('max_pair_tests', 10000), 'max_pair_tests'),
                            integer(local.get('max_features', 4096), 'max_features'))
-    return target, Sizing(wave, fraction, floor, settings)
+    curvature = None
+    if 'curvature' in mesh:
+        data = obj(mesh['curvature'], set(Curvature.__dataclass_fields__), set(), 'curvature')
+        tolerances = {key: number(data[key], 'curvature.'+key, positive=True)
+                      for key in ('absolute_tolerance', 'relative_tolerance') if key in data}
+        if not tolerances:
+            raise ConfigurationError('curvature: absolute_tolerance 또는 relative_tolerance가 필요합니다')
+        if tolerances.get('relative_tolerance', 0) >= 1:
+            raise ConfigurationError('relative_tolerance: 1보다 작아야 합니다')
+        sampling = integer(data.get('sampling_nodes', 10), 'sampling_nodes', 3, 100)
+        verification = integer(data.get('verification_nodes', 19), 'verification_nodes', 3, 100)
+        if verification < sampling:
+            raise ConfigurationError('verification_nodes: sampling_nodes 이상이어야 합니다')
+        curvature = Curvature(**tolerances,
+                              max_iterations=integer(data.get('max_iterations', 3), 'max_iterations', 0, 10),
+                              sampling_nodes=sampling, verification_nodes=verification)
+    return target, Sizing(wave, fraction, floor, settings, curvature)

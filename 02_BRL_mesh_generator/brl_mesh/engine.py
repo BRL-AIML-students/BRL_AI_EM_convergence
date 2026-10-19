@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 import shutil
@@ -18,6 +18,8 @@ from .inspection import MeshContract, cad_boundary_intent, inspect_mesh
 from .model import SurfaceMesh, snapshot, assert_current
 from .errors import MeshBlocked
 from .sizing import SizingPlan, apply_sizing
+from .curvature import CurvaturePlan
+from .resources import checkpoint, resource_scope
 
 
 def boundary_state() -> tuple:
@@ -38,6 +40,7 @@ class Scene:
     contract: MeshContract
     fixed_boundary: tuple
     sizing: SizingPlan
+    curvature: CurvaturePlan | None = None
 
     @property
     def membership(self) -> dict[int, int]:
@@ -63,16 +66,41 @@ def configure_mesh(config: Configuration) -> None:
 
 def generate(config: Configuration) -> Scene:
     """Build in an owned, empty session; shared by the CLI and native UI."""
+    with resource_scope(config.resources):
+        return _generate(config)
+
+
+def _generate(config: Configuration) -> Scene:
     if gmsh.model.getEntities():
         raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
     configure_mesh(config)
     reference = build_geometry(config)
+    checkpoint()
     sizing = apply_sizing(config)
+    checkpoint()
+    curvature = CurvaturePlan(config, sizing) if config.sizing.curvature is not None else None
     for face, sign in reference.sheet_signs.items():
         gmsh.model.mesh.setReverse(2, face, sign < 0)
-    gmsh.model.mesh.generate(2)
+    while True:
+        checkpoint()
+        with curvature.callback() if curvature else nullcontext():
+            gmsh.model.mesh.generate(2)
+        checkpoint(mesh=True)
+        if curvature is None:
+            break
+        current = snapshot(reference.membership)
+        deviation = curvature.measure(current, curvature.settings.sampling_nodes)
+        if deviation.ratio <= 1+1e-10 and curvature.settings.verification_nodes != curvature.settings.sampling_nodes:
+            deviation = curvature.measure(current)
+        curvature.history.append((len(current.element_ids), deviation.ratio))
+        if deviation.ratio <= 1+1e-10:
+            break
+        curvature.refine(deviation)
+        del current, deviation  # Do not retain the previous arrays during regeneration.
+        gmsh.model.mesh.clear()
     fixed_boundary = boundary_state()
     def geometry_check(mesh):
+        checkpoint(mesh=True)
         reference.require_current(config)
         sizing.require_current()
         if boundary_state() != fixed_boundary:
@@ -84,8 +112,9 @@ def generate(config: Configuration) -> Scene:
         options = {'separated_surfaces': config.geometry.separated_surfaces,
                    'protected_gap': config.geometry.protected_gap}
     contract = MeshContract(cad_boundary_intent(reference.components, **options), reference.sheet_signs,
-                            sizing.global_size, geometry_check, sizing.local_edge_ratio)
-    return Scene(reference, contract, fixed_boundary, sizing)
+                            sizing.global_size, geometry_check, sizing.local_edge_ratio,
+                            curvature.deviation_ratio if curvature else None)
+    return Scene(reference, contract, fixed_boundary, sizing, curvature)
 
 
 @contextmanager
@@ -110,6 +139,12 @@ class RunResult:
 
 def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
     """Reinspect the current mesh against its generation reference before output."""
+    with resource_scope(config.resources):
+        return _publish(mesh, config, scene)
+
+
+def _publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
+    checkpoint(mesh=True)
     assert_current(mesh)
     scene.require_current(config)
     current = snapshot(scene.membership)
@@ -121,6 +156,7 @@ def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult
     try:
         nas.write(stage / 'mesh.nas', current, config.output_unit)
         nas.validate(stage / 'mesh.nas', current)
+        checkpoint(mesh=True)
         stage.rename(final)
         return RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
     finally:
@@ -129,7 +165,7 @@ def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult
 
 
 def run(config: Configuration) -> RunResult:
-    with mesh_model(config) as scene:
+    with resource_scope(config.resources), mesh_model(config) as scene:
         prepared = improve(scene.membership, scene.contract, config.improvement)
         prepared.inspection.require_pass()
         return replace(publish(prepared.mesh, config, scene), attempts=prepared.attempts)

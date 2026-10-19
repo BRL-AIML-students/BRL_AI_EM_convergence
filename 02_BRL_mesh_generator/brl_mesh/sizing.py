@@ -167,6 +167,10 @@ def apply_sizing(config):
     magnitude = max(abs(float(v)) for _, tag in gmsh.model.getEntities(2) for v in gmsh.model.getBoundingBox(2, tag))
     if minimum < 128*np.finfo(float).eps*magnitude:
         raise MeshBlocked('size_precision_conflict: 요청 길이가 CAD 좌표 정밀도보다 작습니다')
+    if config.sizing.curvature is not None and floor is None:
+        # Curvature is evaluated locally during generation. Never let a global
+        # field minimum silently clamp a smaller curvature request.
+        minimum = max(np.finfo(float).tiny, 128*np.finfo(float).eps*max(magnitude, global_size))
     field, bindings, applied, leaves = gmsh.model.mesh.field, [], [], []
     if len(field.list()):
         raise MeshBlocked('기존 외부 field가 있습니다. 빈 model에서 다시 생성하세요')

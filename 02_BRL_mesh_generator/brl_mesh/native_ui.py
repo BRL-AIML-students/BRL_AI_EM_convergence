@@ -15,7 +15,8 @@ from .engine import Scene, generate, publish
 from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
 from .model import snapshot
-from .sizing_config import Wave
+from .sizing_config import Wave, Curvature
+from .resources import resource_scope
 
 PREFIX = 'BRL/'
 ACTION = PREFIX + '00 Action'
@@ -55,6 +56,18 @@ TRANSITION_AUTO = PREFIX + 'Local/Automatic transition'
 TRANSITION = PREFIX + 'Local/Transition distance (output unit)'
 GROWTH = PREFIX + 'Local/Transition slope'
 SAMPLING = PREFIX + 'Local/Distance sampling fraction'
+CURVATURE_ENABLED = PREFIX + 'Curvature/Enabled'
+ABS_ENABLED = PREFIX + 'Curvature/Absolute tolerance enabled'
+ABS_TOL = PREFIX + 'Curvature/Absolute tolerance (output unit)'
+REL_ENABLED = PREFIX + 'Curvature/Relative tolerance enabled'
+REL_TOL = PREFIX + 'Curvature/Relative tolerance'
+CURV_ITERATIONS = PREFIX + 'Curvature/Maximum regenerations'
+CURV_SAMPLING = PREFIX + 'Curvature/Sampling nodes per edge'
+CURV_VERIFY = PREFIX + 'Curvature/Verification nodes per edge'
+RESOURCE_CONTROLS = {key: PREFIX+'Resources/'+label for key, label in {
+    'max_nodes': 'Maximum nodes', 'max_triangles': 'Maximum triangles',
+    'max_memory_mb': 'Process memory limit MiB', 'max_seconds': 'Work time limit seconds',
+    'max_projection_samples': 'Maximum projection samples'}.items()}
 ACTIONS = {0: 'Idle', 1: 'Generate + publish NAS', 2: 'Generate mesh',
            3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close'}
 SHEET_DIRECTIONS = {'Not specified': 0, 'CAD normal +': 1, 'CAD normal -': -1}
@@ -71,6 +84,7 @@ def install_controls(config: Configuration) -> None:
     cad = config.geometry if not is_plate else None
     sizing, local = config.sizing, config.sizing.local
     wave = sizing.wave or Wave(1e9)
+    curvature = sizing.curvature or Curvature(absolute_tolerance=.01)
     parameters = [
         _parameter(ACTION, ACTIONS[0], choices=list(ACTIONS.values())),
         _parameter(STATUS, 'Ready: choose an Action', readOnly=True),
@@ -110,6 +124,17 @@ def install_controls(config: Configuration) -> None:
         _parameter(TRANSITION, local.transition_distance if local.transition_distance is not None else 1, min=0),
         _parameter(GROWTH, local.growth_rate, min=0),
         _parameter(SAMPLING, local.sampling_fraction, min=0, max=.5),
+        _parameter(CURVATURE_ENABLED, int(sizing.curvature is not None), choices=[0, 1]),
+        _parameter(ABS_ENABLED, int(curvature.absolute_tolerance is not None), choices=[0, 1]),
+        _parameter(ABS_TOL, curvature.absolute_tolerance or .01, min=0),
+        _parameter(REL_ENABLED, int(curvature.relative_tolerance is not None), choices=[0, 1]),
+        _parameter(REL_TOL, curvature.relative_tolerance or .001, min=0),
+        _parameter(CURV_ITERATIONS, curvature.max_iterations, min=0, max=10, step=1),
+        _parameter(CURV_SAMPLING, curvature.sampling_nodes, min=3, max=100, step=1),
+        _parameter(CURV_VERIFY, curvature.verification_nodes, min=3, max=100, step=1),
+        *[_parameter(name, getattr(config.resources, key), min=1 if key not in
+                     ('max_seconds', 'max_memory_mb') else 0)
+          for key, name in RESOURCE_CONTROLS.items()],
     ]
     gmsh.onelab.set(json.dumps(parameters, ensure_ascii=False))
     update_visibility()
@@ -118,7 +143,7 @@ def install_controls(config: Configuration) -> None:
 def visibility_signature():
     return (tuple(gmsh.onelab.getString(KIND)), *(tuple(gmsh.onelab.getNumber(name)) for name in
             [CAP_ENABLED, WAVE_ENABLED, FLOOR_ENABLED, SHORT_ENABLED, WIDTH_ENABLED, GAP_ENABLED,
-             HOLD_AUTO, TRANSITION_AUTO]))
+             HOLD_AUTO, TRANSITION_AUTO, CURVATURE_ENABLED, ABS_ENABLED, REL_ENABLED]))
 
 
 def update_visibility() -> None:
@@ -131,6 +156,10 @@ def update_visibility() -> None:
                   SHORT_DIV: _flag(SHORT_ENABLED), WIDTH_DIV: _flag(WIDTH_ENABLED),
                   GAP_DIV: _flag(GAP_ENABLED), HOLD: not _flag(HOLD_AUTO),
                   TRANSITION: not _flag(TRANSITION_AUTO), GROWTH: _flag(TRANSITION_AUTO)}
+    visibility.update({name: _flag(CURVATURE_ENABLED) for name in
+                       [ABS_ENABLED, REL_ENABLED, CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY]})
+    visibility.update({ABS_TOL: _flag(CURVATURE_ENABLED) and _flag(ABS_ENABLED),
+                       REL_TOL: _flag(CURVATURE_ENABLED) and _flag(REL_ENABLED)})
     for name, visible in visibility.items():
         # Typed values avoid Gmsh's Windows-path escaping bug in its JSON getter.
         value = _string(name) if name in (CAD_PATH, SHEET_SIGN) else _number(name)
@@ -139,6 +168,11 @@ def update_visibility() -> None:
             options['choices'] = list(SHEET_DIRECTIONS)
         elif name in (SHORT_DIV, WIDTH_DIV, GAP_DIV):
             options['min'] = 1
+        elif name in (ABS_ENABLED, REL_ENABLED):
+            options['choices'] = [0, 1]
+        elif name in (CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY):
+            options.update(min=0 if name == CURV_ITERATIONS else 3,
+                           max=10 if name == CURV_ITERATIONS else 100, step=1)
         elif name != CAD_PATH and name not in ORIGIN:
             options['min'] = 0
         gmsh.onelab.set(json.dumps(_parameter(name, value, visible=visible, **options), ensure_ascii=False))
@@ -221,8 +255,18 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
             local.pop(key, None)
         else:
             local[key] = _number(control)
+    if _flag(CURVATURE_ENABLED):
+        curvature = {'max_iterations': _integer(CURV_ITERATIONS), 'sampling_nodes': _integer(CURV_SAMPLING),
+                     'verification_nodes': _integer(CURV_VERIFY)}
+        if _flag(ABS_ENABLED): curvature['absolute_tolerance'] = _number(ABS_TOL)
+        if _flag(REL_ENABLED): curvature['relative_tolerance'] = _number(REL_TOL)
+        mesh['curvature'] = curvature
+    else:
+        mesh.pop('curvature', None)
+    resources = {key: (_number(name) if key in ('max_seconds', 'max_memory_mb') else _integer(name))
+                 for key, name in RESOURCE_CONTROLS.items()}
     value.update(geometry=geometry, length_unit=_string(INPUT_UNIT), output_unit=_string(OUTPUT_UNIT),
-                 mesh=mesh, output_dir=_string(OUTPUT),
+                 mesh=mesh, resources=resources, output_dir=_string(OUTPUT),
                  improvement={'enabled': bool(enabled), 'max_passes': _integer(PASSES)})
     return Configuration.from_dict(value, base_dir)
 
@@ -280,6 +324,10 @@ class Controller:
         if action == 0:
             return
         config = read_controls(self.base, self.base_dir)
+        with resource_scope(config.resources):
+            self._perform(action, config)
+
+    def _perform(self, action: int, config: Configuration) -> None:
         self.invalidate_if_changed()
         self.status('Working')
         if action in (1, 2):

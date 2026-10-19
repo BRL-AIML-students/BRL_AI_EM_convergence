@@ -15,6 +15,7 @@ from .preservation import GeometryValues, measure_geometry
 from .quality import read_icn
 from .topology import BoundaryIntent, TopologyValues, inspect_topology
 from .validation import Issue, require_pass
+from .resources import checkpoint
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class MeshContract:
     target_size: float
     geometry_check: Callable[[SurfaceMesh], None] | None = None
     local_size_measure: Callable[[SurfaceMesh], float] | None = None
+    deviation_measure: Callable[[SurfaceMesh], float] | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class Inspection:
     edge_max_to_target: float
     coordinate_noise: float
     local_edge_max_to_target: float = 0.
+    deviation_ratio_max: float = 0.
 
     @property
     def minimum_icn(self) -> float:
@@ -69,6 +72,7 @@ def cad_boundary_intent(expected_components: int, **kwargs) -> BoundaryIntent:
 
 
 def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
+    checkpoint(mesh=True)
     mesh.validate()
     assert_current(mesh)
     shape = measure_shape(mesh)
@@ -86,6 +90,16 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
         except Exception as exc:
             issues.append(Issue('geometry_incomplete', str(exc), 'incomplete'))
     local_ratio = 0.
+    deviation_ratio = 0.
+    if not issues and contract.deviation_measure is not None:
+        try:
+            deviation_ratio = contract.deviation_measure(mesh)
+            if not np.isfinite(deviation_ratio) or deviation_ratio < 0:
+                raise ValueError('CAD 편차 비율이 유효하지 않습니다')
+            if deviation_ratio > 1+1e-10:
+                issues.append(Issue('cad_deviation', f'현재 mesh의 표본 편차/허용값={deviation_ratio:g} > 1'))
+        except Exception as exc:
+            issues.append(Issue('cad_deviation_incomplete', str(exc), 'incomplete'))
     if not issues and contract.local_size_measure is not None:
         try:
             local_ratio = contract.local_size_measure(mesh)
@@ -105,4 +119,5 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
     longest = max(float(np.linalg.norm(xyz[:, (i + 1) % 3] - xyz[:, i], axis=1).max()) for i in range(3))
     ratio = longest / contract.target_size if np.isfinite(contract.target_size) and contract.target_size > 0 else float('inf')
     noise = 64 * np.finfo(float).eps * max(float(np.max(np.abs(mesh.coordinates))), longest)
-    return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise, local_ratio)
+    checkpoint()
+    return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise, local_ratio, deviation_ratio)

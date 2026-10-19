@@ -4,7 +4,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 ## 현재 상태
 
-2026-10-19: 0–4단계의 독립 코어·품질/rollback·STEP/IGES/BREP·native ONELAB 및 특징별 크기장을 구현했습니다. 직접 생성하는 primitive는 현재 XY 평면의 직사각형 판(+Z)이며, CAD 파일에서는 solid와 열린 sheet 및 mixed BREP의 독립 curve/point를 읽습니다. 곡률/전체 자원 제어·통합 검증은 5–6단계입니다.
+2026-10-19: 0–5단계의 독립 코어·품질/rollback·STEP/IGES/BREP·native ONELAB·특징별 크기장·편차 기반 곡률 feedback과 자원 검사를 구현했습니다. 직접 생성하는 primitive는 현재 XY 평면의 직사각형 판(+Z)이며, CAD 파일에서는 solid와 열린 sheet 및 mixed BREP의 독립 curve/point를 읽습니다. 6단계의 추가 primitive와 복잡 CAD 통합 검증이 남아 있습니다.
 
 - [재작성 계획](docs/rebuild-plan-ko.md)
 - [기존 BRL 보관 기록](docs/archive-record-ko.md)
@@ -13,6 +13,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 - [2단계 구현·검증 기록과 품질 정책 결정](docs/stage-2-validation-ko.md)
 - [3단계 CAD·ONELAB 검증 기록](docs/stage-3-validation-ko.md)
 - [4단계 특징별 크기장 검증 기록](docs/stage-4-validation-ko.md)
+- [5단계 곡률·편차·자원 검증 기록](docs/stage-5-validation-ko.md)
 
 ## 설치·실행
 
@@ -28,6 +29,9 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 # 폭 기반·분리 간극 기반 크기장
 .\run_cli.bat examples\thin_plate.json
 .\run_cli.bat examples\gaps.json
+# 곡면 편차 feedback / 원당 223 분할 요구
+.\run_cli.bat examples\cylinder.json
+.\run_cli.bat examples\circle_223.json
 # native Gmsh 창과 ONELAB
 .\run_gmsh_ui.bat examples\plate.json
 ```
@@ -86,11 +90,53 @@ PID는 변환 후 CAD surface tag와 같고 Physical Group으로 관리합니다
 
 폭 자동 측정은 **직선 경계를 가진 단일 loop의 볼록 평면**을 지원합니다. hole·비볼록 neck·곡선 경계·곡면 폭은 요청 시 `width_unsupported`로 차단하며 필요한 면만 `widths.entities`로 선택하거나 수동 영역을 사용합니다. `short_edges.entities`는 curve tag, `gaps.pairs`는 surface tag 쌍입니다. 생략하면 지원 범위 전체를 검사합니다. 공유 연결/같은 solid 내부의 면을 분리 gap으로 취급하지 않고, 분리 entity의 접촉·거리 0·측정 실패도 정상 간극으로 처리하지 않습니다. gap Box는 최소 거리 주변의 보수적인 bbox 영역이며 임의 곡면 전체에서 같은 간극 폭을 의미하지 않습니다.
 
-`local.max_sampling`(기본 4096), `max_pair_tests`(10000), `max_features`(4096)를 넘으면 요청을 느슨하게 바꾸지 않고 측정 미완료로 차단합니다. 폭 계산의 쌍 예산은 dense geometry 계산 전에 확인합니다. 이 한도는 CAD/field 측정의 한도이며 전체 생성 요소 수·시간·메모리 제한은 5단계입니다.
+`local.max_sampling`(기본 4096), `max_pair_tests`(10000), `max_features`(4096)를 넘으면 요청을 느슨하게 바꾸지 않고 측정 미완료로 차단합니다. 폭 계산의 쌍 예산은 dense geometry 계산 전에 확인합니다. 이 한도는 CAD/field 측정의 한도이며 전체 실행의 자원 설정은 아래 `resources`와 구분합니다.
 
 ONELAB에서는 `BRL/Sizing`의 cap·파장·하한과 `BRL/Local`의 자동 규칙·분할·유지·전이·sampling을 제어합니다. 고급 entity 선택·수동 curve/Box·측정 한도는 시작 JSON을 보존합니다. `BRL/03 Applied global size`는 실제 적용한 전역 요청을 출력 단위로 표시합니다. 예제 실행은 `run_gmsh_ui.bat examples/thin_plate.json` 또는 `examples/gaps.json`이며 Action 흐름은 같습니다.
 
 발행 전 적용 field의 ID·type·계수·entity 목록·전역 크기 옵션을 확인합니다. 변경되면 재생성을 요구합니다. 개선의 비악화 판정에는 실제 edge 중점 길이 / CAD 거리 기반 국소 요청의 최대 비율을 추가했습니다. 이 감사는 Gmsh의 표본 Distance evaluator와 수치가 같다는 가정이나 모든 edge의 엄격한 목표 충족/EM 정확도 보증으로 쓰지 않습니다.
+
+## 곡률·CAD 편차
+
+`mesh.curvature`를 지정하면 국소 곡률로 초기 목표를 계산하고, 실제 CAD 표본 편차가 허용값을 초과한 CAD entity의 목표를 줄여 재생성합니다. 기본으로 꺼져 있으며, 새 예제 `cylinder.json`과 `circle_223.json`에서 활성화합니다.
+
+```json
+"curvature": {"absolute_tolerance": 0.02, "max_iterations": 3,
+              "sampling_nodes": 10, "verification_nodes": 19}
+```
+
+| 설정 | 목적·적용·변경 효과 |
+|---|---|
+| `absolute_tolerance` | 출력 단위의 CAD 편차; 작게 하면 곡면/원호 목표가 대략 제곱근 비율로 작아짐 |
+| `relative_tolerance` | 국소 CAD face의 `sqrt(area)`, curve의 arc length에 곱한 편차; 전체 bbox D를 사용하지 않음 |
+| 두 tolerance 동시 지정 | 각 entity에서 더 엄격한 값을 사용; 둘 중 하나 이상 필요 |
+| `max_iterations` | 최초 생성 이후 허용할 재생성 횟수, 기본 3·범위 0–10; 0도 편차 검사를 수행하고 초과 시 차단 |
+| `sampling_nodes` | 생성 feedback의 edge당 표본 수, 기본 10; 삼각형당 55개 barycentric 표본 |
+| `verification_nodes` | 최종 생성·개선·발행의 edge당 표본 수, 기본 19; 삼각형당 190개, sampling_nodes 이상 필요 |
+
+예를 들어 R=10 mm·편차 0.001 mm인 원의 초기 분할 요구는 223입니다. 고정 200 clamp를 적용하지 않습니다. curve에는 `2*sqrt(2*R*delta-delta^2)`, surface에는 최대 절대 주곡률 반경을 이용한 `sqrt(6*R*delta)`를 초기 길이로 사용합니다. 평면의 곡률 요청은 전역 cap을 유지합니다. 작은 반경/특이점에는 유한 편차 해상도를 적용하고, 극점의 미정 주곡률은 인접 parameter에서 다시 구하며 실패하면 차단합니다. 이 초기식만으로 일반 곡면의 삼각형 내부 편차가 보장되지는 않습니다.
+
+Gmsh `setSizeCallback`에서 기존 field 결과와 곡률 목표의 최솟값을 적용합니다. 원당 전역 `MeshSizeFromCurvature`는 0이며, seam도 곡률 경계 제어에 포함합니다. feedback은 초과한 face/curve별 배율과 해당 face의 경계 목표를 줄이므로 한 face 전체를 보수적으로 세분화할 수 있습니다. 형상/PID는 유지하되 재생성으로 node/element ID·연결은 바뀔 수 있습니다. node relocation 단계의 연결 보존·정확한 rollback 계약과 구분합니다.
+
+현재 CAD를 유지한 채 원본 element ID별로 triangle 내부·edge와 CAD boundary line의 projection 거리를 측정하고, surface projection의 parameter round-trip과 trim 포함을 확인합니다. `DiscretizationError`는 공식 소스 검토 후 원본 ID·projection 성공 계약 때문에 채택하지 않았습니다. 실패 시 다른 측정으로 조용히 대체하지 않습니다. 임시 편차 view나 파일은 만들지 않습니다. 설정한 최종 표본의 편차 검사를 개선 후보와 NAS 발행 직전 현재 mesh에서 다시 수행하고, 개선 수용 시 최대 편차 비율의 비악화도 요구합니다.
+
+편차는 유한 표본의 mesh→CAD 거리입니다. 일반 CAD의 연속 최대 편차·양방향 Hausdorff 거리·EM 정확도를 보증하지 않습니다. 표본 수를 늘리면 측정값과 비용이 달라질 수 있습니다. `minimum_size`와 요구가 충돌하거나 반복/자원 한도에 도달하면 요청을 clamp해 성공 처리하지 않고 발행을 차단합니다.
+
+## 실행 자원
+
+최상위 `resources`는 생략해도 아래 기본값으로 동작합니다. ONELAB의 `BRL/Resources`에서도 같은 값을 설정합니다.
+
+| 키 | 기본값 | 실제 검사 |
+|---|---:|---|
+| `max_nodes` | 150000 | 생성 후·검사/발행 시 현재 Gmsh model의 전체 node 수 |
+| `max_triangles` | 200000 | 생성 후·검사/발행 시 현재 model의 1차 triangle 수 |
+| `max_memory_mb` | 2048 | 현재 실행 프로세스의 private committed memory, MiB·Windows 검증 |
+| `max_seconds` | 300 | 한 CLI 실행 또는 ONELAB Action의 작업 시간, UI idle 제외 |
+| `max_projection_samples` | 20000000 | 곡률 편차 projection 표본 누계; 재생성·개선·발행이 같은 예산 소비 |
+
+시간·메모리는 **협력적 검사**입니다. CAD/크기장/mesh API 호출 전후와 곡률 callback/표본 batch에서 확인하며, 단일 OCC/Gmsh native 호출을 강제 중단하거나 allocator를 제한하지 않습니다. 따라서 native 호출 중의 일시적 초과·peak memory·엄격한 wall-clock 종료를 보장하지 않습니다. 한도를 관측하면 이번 NAS 발행을 막고, 임시 NAS만 정리하며 이전 정상 결과는 보존합니다. 같은 ONELAB Action 내부 코어 호출은 예산을 공유하고, 다음 Action은 새 예산을 시작합니다.
+
+ONELAB의 `BRL/Curvature`에서 활성화·절대/상대 편차·재생성 횟수·두 표본 수를 조정합니다. 이 설정 또는 자원 설정을 바꾸면 이전 scene은 재생성이 필요합니다. `Generate + publish NAS`의 기존 Action 흐름은 같습니다.
 
 ## 로컬 단계별 작업
 
@@ -100,7 +146,7 @@ ONELAB에서는 `BRL/Sizing`의 cap·파장·하한과 `BRL/Local`의 자동 규
 
 ```powershell
 New-Item -ItemType Directory -Path .cache\tests -Force | Out-Null
-.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage4
+.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage5
 ```
 
 Windows Gmsh DLL과 pytest의 기본 native FD capture 충돌을 피하도록 `--capture=sys`를 프로젝트 설정에 포함했습니다. 제품의 보고서·진단 파일 생성과 개발 테스트 기록은 구분합니다.

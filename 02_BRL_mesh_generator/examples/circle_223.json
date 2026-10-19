@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "cad", "path": "cad/circle_223.brep", "sheet_normal": 1},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {
+    "target_size": 1,
+    "curvature": {"absolute_tolerance": 0.001}
+  },
+  "output_dir": "../outputs"
+}
