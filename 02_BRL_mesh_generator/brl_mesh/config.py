@@ -6,29 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ConfigurationError
+from .schema import object_value as _object, number as _number
+from .sizing_config import Sizing, parse_sizing
 
 UNIT_METRES = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6}
-
-
-def _object(value: object, allowed: set[str], required: set[str], name: str) -> dict:
-    if not isinstance(value, dict):
-        raise ConfigurationError(f"{name}: object가 필요합니다")
-    unknown, missing = set(value) - allowed, required - set(value)
-    if unknown or missing:
-        raise ConfigurationError(f"{name}: 알 수 없는 키 {sorted(unknown)}, 누락된 키 {sorted(missing)}")
-    return value
-
-
-def _number(value: object, name: str, *, positive: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (float, int)):
-        raise ConfigurationError(f"{name}: 유한한 숫자가 필요합니다")
-    try:
-        result = float(value)
-    except OverflowError as exc:
-        raise ConfigurationError(f"{name}: 숫자 범위를 초과했습니다") from exc
-    if not math.isfinite(result) or (positive and result <= 0):
-        raise ConfigurationError(f"{name}: {'양의 ' if positive else ''}유한한 숫자가 필요합니다")
-    return result
 
 
 def _unit(value: object, name: str) -> str:
@@ -77,9 +58,10 @@ class Configuration:
     geometry: Plate | CadFile
     length_unit: str
     output_unit: str
-    target_size: float
+    target_size: float | None
     output_dir: Path
     improvement: Improvement = Improvement()
+    sizing: Sizing = Sizing()
 
     @property
     def unit_scale(self) -> float:
@@ -101,7 +83,7 @@ class Configuration:
             if geometry.protected_gap is not None:
                 value['protected_gap'] = geometry.protected_gap
         return {'schema_version': 1, 'geometry': value, 'length_unit': self.length_unit,
-                'output_unit': self.output_unit, 'mesh': {'target_size': self.target_size},
+                'output_unit': self.output_unit, 'mesh': self.sizing.to_dict(self.target_size),
                 'improvement': {'enabled': self.improvement.enabled, 'max_passes': self.improvement.max_passes},
                 'output_dir': str(self.output_dir)}
 
@@ -112,7 +94,7 @@ class Configuration:
         if type(root["schema_version"]) is not int or root["schema_version"] != 1:
             raise ConfigurationError("schema_version: 현재 지원하는 버전은 정수 1입니다")
         geometry = _geometry(root['geometry'], base_dir or Path.cwd())
-        mesh = _object(root["mesh"], {"target_size"}, {"target_size"}, "mesh")
+        target, sizing = parse_sizing(root['mesh'])
         improvement = _object(root.get('improvement', {}), {'enabled', 'max_passes'}, set(), 'improvement')
         enabled, passes = improvement.get('enabled', True), improvement.get('max_passes', 3)
         output = root.get("output_dir", "outputs")
@@ -123,8 +105,7 @@ class Configuration:
             output_path = (base_dir or Path.cwd()) / output_path
         config = cls(geometry, _unit(root.get("length_unit", "mm"), "length_unit"),
                      _unit(root.get("output_unit", "mm"), "output_unit"),
-                     _number(mesh["target_size"], "mesh.target_size", positive=True), output_path.resolve(),
-                     Improvement(enabled, passes))
+                     target, output_path.resolve(), Improvement(enabled, passes), sizing)
         if isinstance(geometry, Plate):
             scaled = [geometry.length * config.unit_scale, geometry.width * config.unit_scale,
                       *(x * config.unit_scale for x in geometry.origin)]

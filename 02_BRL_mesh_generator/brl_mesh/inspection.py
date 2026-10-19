@@ -23,6 +23,7 @@ class MeshContract:
     sheet_signs: dict[int, int]
     target_size: float
     geometry_check: Callable[[SurfaceMesh], None] | None = None
+    local_size_measure: Callable[[SurfaceMesh], float] | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Inspection:
     issues: tuple[Issue, ...]
     edge_max_to_target: float
     coordinate_noise: float
+    local_edge_max_to_target: float = 0.
 
     @property
     def minimum_icn(self) -> float:
@@ -83,6 +85,14 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
             issues.append(Issue('geometry_constraints', str(exc)))
         except Exception as exc:
             issues.append(Issue('geometry_incomplete', str(exc), 'incomplete'))
+    local_ratio = 0.
+    if not issues and contract.local_size_measure is not None:
+        try:
+            local_ratio = contract.local_size_measure(mesh)
+            if not np.isfinite(local_ratio) or local_ratio < 0:
+                raise ValueError('국소 크기 비율이 유효하지 않습니다')
+        except Exception as exc:
+            issues.append(Issue('local_size_incomplete', str(exc), 'incomplete'))
     icn = {}
     if not issues:
         try:
@@ -95,4 +105,4 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
     longest = max(float(np.linalg.norm(xyz[:, (i + 1) % 3] - xyz[:, i], axis=1).max()) for i in range(3))
     ratio = longest / contract.target_size if np.isfinite(contract.target_size) and contract.target_size > 0 else float('inf')
     noise = 64 * np.finfo(float).eps * max(float(np.max(np.abs(mesh.coordinates))), longest)
-    return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise)
+    return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise, local_ratio)

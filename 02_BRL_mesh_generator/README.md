@@ -4,7 +4,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 ## 현재 상태
 
-2026-10-19: 0–3단계의 독립 코어·품질/rollback·STEP/IGES/BREP 입력·native ONELAB 연결을 구현했습니다. 직접 생성하는 primitive는 현재 XY 평면의 직사각형 판(+Z)이며, CAD 파일에서는 solid와 열린 sheet 및 mixed BREP의 독립 curve/point를 읽습니다. 특징별 크기장·곡률/자원 제어·통합 검증은 4–6단계입니다.
+2026-10-19: 0–4단계의 독립 코어·품질/rollback·STEP/IGES/BREP·native ONELAB 및 특징별 크기장을 구현했습니다. 직접 생성하는 primitive는 현재 XY 평면의 직사각형 판(+Z)이며, CAD 파일에서는 solid와 열린 sheet 및 mixed BREP의 독립 curve/point를 읽습니다. 곡률/전체 자원 제어·통합 검증은 5–6단계입니다.
 
 - [재작성 계획](docs/rebuild-plan-ko.md)
 - [기존 BRL 보관 기록](docs/archive-record-ko.md)
@@ -12,6 +12,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 - [1단계 구현·검증 기록](docs/stage-1-validation-ko.md)
 - [2단계 구현·검증 기록과 품질 정책 결정](docs/stage-2-validation-ko.md)
 - [3단계 CAD·ONELAB 검증 기록](docs/stage-3-validation-ko.md)
+- [4단계 특징별 크기장 검증 기록](docs/stage-4-validation-ko.md)
 
 ## 설치·실행
 
@@ -24,13 +25,16 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 .\run_cli.bat examples\plate.json
 # solid + sheet + 독립 curve/point를 포함한 BREP 예제
 .\run_cli.bat examples\mixed_brep.json
+# 폭 기반·분리 간극 기반 크기장
+.\run_cli.bat examples\thin_plate.json
+.\run_cli.bat examples\gaps.json
 # native Gmsh 창과 ONELAB
 .\run_gmsh_ui.bat examples\plate.json
 ```
 
 정상 시 `outputs/run_<id>/mesh.nas` 한 파일과 stdout의 짧은 상태 JSON을 제공합니다. NAS를 임시 파일로 쓰고 독립 pyNastran reader에서 좌표·ID·connectivity·PID 일치를 확인한 후 발행합니다. 실패한 임시 파일은 정리하고 기존 정상 결과를 보존합니다. 종료 코드는 정상 0, 입력/실행 오류 1, 검사 차단 2입니다.
 
-`geometry.length/width/origin`은 `length_unit` 기준이며 `mesh.target_size`는 `output_unit` 기준의 요청 길이입니다. 예제는 100 × 60 mm 판에 10 mm 목표를 적용합니다. 목표 길이는 실제 모든 edge의 엄격한 상한이 아닙니다. 상대 `output_dir`는 설정 파일의 폴더를 기준으로 해석합니다. 알 수 없는 geometry·설정 키·과거 controlled/compare 키는 명시적으로 거부합니다.
+`geometry.length/width/origin`은 `length_unit` 기준이며 `mesh.target_size`는 `output_unit` 기준의 전역 요청 상한입니다. 예제는 100 × 60 mm 판에 10 mm 목표를 적용합니다. 목표 길이는 실제 모든 edge의 엄격한 상한이 아닙니다. 상대 `output_dir`는 설정 파일의 폴더를 기준으로 해석합니다. 알 수 없는 geometry·설정 키·과거 controlled/compare 키는 명시적으로 거부합니다.
 
 `improvement.enabled`는 형상 불량이 있을 때 노드 재배치를 시도할지 정합니다. 기본값은 true, `max_passes` 기본값은 3(허용 범위 0–10)입니다. 예를 들어 false이면 재배치를 하지 않지만 필수 검사는 그대로 수행하고 불량 NAS 발행을 차단합니다. topology·법선·필수 계산에 문제가 있으면 재배치를 시작하지 않습니다. 정상 메쉬를 불필요하게 바꾸지 않으며 개선 전후 파일을 따로 만들지 않습니다.
 
@@ -56,7 +60,37 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 solid 경계는 CAD의 바깥 방향을 검사합니다. 열린 sheet는 `geometry.sheet_normal=1` 또는 `-1`로 CAD parameter normal의 기준 방향을 명시합니다. 면별 설정은 `sheet_normals={"7": -1}`처럼 surface tag별로 지정하며, 면별 값이 공통 `sheet_normal`보다 우선합니다. 필요한 방향이 빠지거나 solid 경계를 sheet로 지정하면 차단합니다. 음의 기준은 생성 winding에 적용하고 최종 현재 mesh에서도 다시 검사합니다.
 
-PID는 변환 후 CAD surface tag와 같고 Physical Group으로 관리합니다. 재질 번호가 아니며 CAD를 수정하거나 Gmsh build가 바뀌어도 같은 tag가 유지된다는 보장은 없습니다. 고급 면별 방향과 `separated_surfaces`/`protected_gap`은 시작 JSON에 지정하며 ONELAB에서도 그 설정을 유지합니다. `separated_surfaces`는 공유 CAD 경계가 없는 surface 쌍에 대한 분리 의도입니다. `protected_gap`은 기존 node/edge 근접 검사의 tolerance 충돌 판정에 사용하며, 최소 간극 전체를 측정하거나 gap size field를 생성하는 기능은 4단계입니다.
+PID는 변환 후 CAD surface tag와 같고 Physical Group으로 관리합니다. 재질 번호가 아니며 CAD를 수정하거나 Gmsh build가 바뀌어도 같은 tag가 유지된다는 보장은 없습니다. 고급 면별 방향과 `separated_surfaces`/`protected_gap`은 시작 JSON에 지정하며 ONELAB에서도 그 설정을 유지합니다. `separated_surfaces`는 공유 CAD 경계가 없는 surface 쌍에 대한 분리 의도입니다. `protected_gap`은 기존 node/edge 근접 검사의 tolerance 충돌 판정에 사용하며, 별도 `mesh.local.gaps.enabled=true`가 분리 CAD 사이의 최소 거리 측정과 gap size field를 활성화합니다. 전체 공간의 최소 간극 보증이나 같은 face의 접힘 측정은 하지 않습니다.
+
+## 전역·국소 크기장
+
+`mesh.target_size`와 `mesh.wave`가 있으면 적용 가능한 요청 길이의 최솟값을 사용합니다. wave는 균질·무손실 매질의 `c0 / f / sqrt(eps_r*mu_r) / elements_per_wavelength`를 출력 단위로 계산합니다. 둘 다 없으면 surface CAD bbox의 대각 길이 × `fallback_fraction`(기본 0.1)을 사용합니다. 자동 선택은 키를 생략해 표현하며 `target_size=0`은 허용하지 않습니다. 예를 들어 10 GHz·파장당 요청 10·진공 조건의 길이는 약 2.998 mm이므로, 5 mm cap과 함께 사용하면 약 2.998 mm를 적용합니다. 이 경우 fallback 비율을 바꿔도 적용 길이는 같습니다. 파장당 개수는 EM 정확도 보증이 아닙니다.
+
+국소 자동 규칙은 기본으로 꺼져 있습니다. `examples/thin_plate.json`과 `examples/gaps.json`에서 각각 활성화한 예제를 제공합니다.
+
+| 설정 | 목적과 적용 | 값을 바꿀 때 |
+|---|---|---|
+| `local.short_edges` | non-seam CAD edge의 실제 길이 / `divisions` | divisions를 키우면 해당 edge 목표가 작아짐 |
+| `local.widths` | 볼록 평면 polygon의 실제 최소 지지선 폭 / `divisions` | 10×0.6 mm 판에서 3이면 0.2 mm 요청; 면적의 제곱근이나 축 방향 bbox 폭을 대신 쓰지 않음 |
+| `local.gaps` | 분리 CAD의 bbox 후보를 실제 `occ.getDistance`로 확인하고 gap / `divisions`를 공간 Box에 적용 | 0.6/1.2 mm 간극에 3이면 각각 0.2/0.4 mm; 빈 공간의 체적 mesh 층 수가 아님 |
+| `local.curves` | `[{"entity":1,"size":0.2}]`처럼 지정 curve 주변 보호 | 지정 size가 작아지면 해당 주변이 더 촘촘해짐 |
+| `local.boxes` | `[{"bounds":[xmin,ymin,zmin,xmax,ymax,zmax],"size":0.2}]` | 지정 영역의 독립 목표를 적용 |
+| `local.hold_distance` | 작은 목표를 유지할 거리; 생략하면 각 국소 목표 길이 | 전이 거리와 독립적으로 보호 범위를 넓히거나 줄임; 0 허용 |
+| `local.transition_distance` | 유지 영역 밖의 전이 거리 | 생략 시 `(global-local)/growth_rate`; 기본 slope 0.3 |
+| `local.sampling_fraction` | Distance의 geometry 표본 간격을 결정; 기본 0.25 | 줄이면 `Sampling` 증가, 근사 거리의 밀도 증가 |
+| `mesh.minimum_size` | 명시적 최소 요청 길이 | 전역·필수 국소 요청보다 크면 `minimum_size_conflict`로 차단 |
+
+예를 들어 전역 3 mm·국소 0.2 mm·유지 0.4 mm·slope 0.3이면 `DistMin=0.4`, 전이 거리 약 9.333, `DistMax≈9.733 mm`입니다. 전이 slope는 실제 인접 요소 크기비의 보증이 아닙니다. Box는 유지 거리만큼 영역을 확장하고 바깥에 `Thickness` 전이를 둡니다.
+
+짧은 edge와 수동 curve에는 `Distance → Threshold`, 폭에는 해당 면/경계의 상수 `Restrict`와 경계 주변 전이, gap·수동 영역에는 `Box`를 적용하고 `Min`으로 결합합니다. `MeshSizeMin/Max`는 요청 field의 범위이며 모든 실제 edge 길이의 엄격한 상·하한이 아닙니다. 국소 목표의 전체 최솟값을 모든 특징의 값으로 복사하지 않습니다. 겹치는 영향 영역에서는 `Min`이 더 작은 요청을 적용합니다.
+
+폭 자동 측정은 **직선 경계를 가진 단일 loop의 볼록 평면**을 지원합니다. hole·비볼록 neck·곡선 경계·곡면 폭은 요청 시 `width_unsupported`로 차단하며 필요한 면만 `widths.entities`로 선택하거나 수동 영역을 사용합니다. `short_edges.entities`는 curve tag, `gaps.pairs`는 surface tag 쌍입니다. 생략하면 지원 범위 전체를 검사합니다. 공유 연결/같은 solid 내부의 면을 분리 gap으로 취급하지 않고, 분리 entity의 접촉·거리 0·측정 실패도 정상 간극으로 처리하지 않습니다. gap Box는 최소 거리 주변의 보수적인 bbox 영역이며 임의 곡면 전체에서 같은 간극 폭을 의미하지 않습니다.
+
+`local.max_sampling`(기본 4096), `max_pair_tests`(10000), `max_features`(4096)를 넘으면 요청을 느슨하게 바꾸지 않고 측정 미완료로 차단합니다. 폭 계산의 쌍 예산은 dense geometry 계산 전에 확인합니다. 이 한도는 CAD/field 측정의 한도이며 전체 생성 요소 수·시간·메모리 제한은 5단계입니다.
+
+ONELAB에서는 `BRL/Sizing`의 cap·파장·하한과 `BRL/Local`의 자동 규칙·분할·유지·전이·sampling을 제어합니다. 고급 entity 선택·수동 curve/Box·측정 한도는 시작 JSON을 보존합니다. `BRL/03 Applied global size`는 실제 적용한 전역 요청을 출력 단위로 표시합니다. 예제 실행은 `run_gmsh_ui.bat examples/thin_plate.json` 또는 `examples/gaps.json`이며 Action 흐름은 같습니다.
+
+발행 전 적용 field의 ID·type·계수·entity 목록·전역 크기 옵션을 확인합니다. 변경되면 재생성을 요구합니다. 개선의 비악화 판정에는 실제 edge 중점 길이 / CAD 거리 기반 국소 요청의 최대 비율을 추가했습니다. 이 감사는 Gmsh의 표본 Distance evaluator와 수치가 같다는 가정이나 모든 edge의 엄격한 목표 충족/EM 정확도 보증으로 쓰지 않습니다.
 
 ## 로컬 단계별 작업
 
@@ -66,7 +100,7 @@ PID는 변환 후 CAD surface tag와 같고 Physical Group으로 관리합니다
 
 ```powershell
 New-Item -ItemType Directory -Path .cache\tests -Force | Out-Null
-.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage3
+.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage4
 ```
 
 Windows Gmsh DLL과 pytest의 기본 native FD capture 충돌을 피하도록 `--capture=sys`를 프로젝트 설정에 포함했습니다. 제품의 보고서·진단 파일 생성과 개발 테스트 기록은 구분합니다.

@@ -17,6 +17,7 @@ from .improvement import Attempt, improve
 from .inspection import MeshContract, cad_boundary_intent, inspect_mesh
 from .model import SurfaceMesh, snapshot, assert_current
 from .errors import MeshBlocked
+from .sizing import SizingPlan, apply_sizing
 
 
 def boundary_state() -> tuple:
@@ -36,6 +37,7 @@ class Scene:
     cad: CadReference
     contract: MeshContract
     fixed_boundary: tuple
+    sizing: SizingPlan
 
     @property
     def membership(self) -> dict[int, int]:
@@ -43,6 +45,7 @@ class Scene:
 
     def require_current(self, config: Configuration) -> None:
         self.cad.require_current(config)
+        self.sizing.require_current()
         if boundary_state() != self.fixed_boundary:
             raise MeshBlocked('CAD point/curve mesh가 생성 시점과 다릅니다. 다시 생성하세요')
 
@@ -54,8 +57,7 @@ def configure_mesh(config: Configuration) -> None:
         gmsh.option.setNumber(f'Mesh.MaxNumThreads{dimension}D', 1)
     for key, value in {'RandomSeed': 1, 'Algorithm': 6, 'ElementOrder': 1, 'RecombineAll': 0,
                        'MeshSizeFromPoints': 0, 'MeshSizeFromCurvature': 0,
-                       'MeshSizeExtendFromBoundary': 0, 'MeshSizeMin': config.target_size,
-                       'MeshSizeMax': config.target_size}.items():
+                       'MeshSizeExtendFromBoundary': 0}.items():
         gmsh.option.setNumber('Mesh.' + key, value)
 
 
@@ -65,12 +67,14 @@ def generate(config: Configuration) -> Scene:
         raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
     configure_mesh(config)
     reference = build_geometry(config)
+    sizing = apply_sizing(config)
     for face, sign in reference.sheet_signs.items():
         gmsh.model.mesh.setReverse(2, face, sign < 0)
     gmsh.model.mesh.generate(2)
     fixed_boundary = boundary_state()
     def geometry_check(mesh):
         reference.require_current(config)
+        sizing.require_current()
         if boundary_state() != fixed_boundary:
             raise MeshBlocked('CAD point/curve mesh가 생성 시점과 다릅니다. 다시 생성하세요')
         if isinstance(config.geometry, Plate):
@@ -80,8 +84,8 @@ def generate(config: Configuration) -> Scene:
         options = {'separated_surfaces': config.geometry.separated_surfaces,
                    'protected_gap': config.geometry.protected_gap}
     contract = MeshContract(cad_boundary_intent(reference.components, **options), reference.sheet_signs,
-                            config.target_size, geometry_check)
-    return Scene(reference, contract, fixed_boundary)
+                            sizing.global_size, geometry_check, sizing.local_edge_ratio)
+    return Scene(reference, contract, fixed_boundary, sizing)
 
 
 @contextmanager

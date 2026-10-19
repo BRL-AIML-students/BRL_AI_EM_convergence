@@ -236,7 +236,7 @@ def test_publication_rechecks_after_an_earlier_success(config):
     assert not config.output_dir.exists()
 
 
-@pytest.mark.parametrize('metric', ['size', 'gradation', 'centroid', 'node', 'area', 'volume'])
+@pytest.mark.parametrize('metric', ['size', 'local_size', 'gradation', 'centroid', 'node', 'area', 'volume'])
 def test_improved_shape_does_not_hide_preservation_regressions(config, monkeypatch, metric):
     import brl_mesh.improvement as module
     with mesh_model(config) as scene:
@@ -252,6 +252,8 @@ def test_improved_shape_does_not_hide_preservation_regressions(config, monkeypat
                 old = calls[0]
                 if metric == 'size':
                     result = replace(result, edge_max_to_target=old.edge_max_to_target * 1.1)
+                elif metric == 'local_size':
+                    result = replace(result, local_edge_max_to_target=old.local_edge_max_to_target + .1)
                 elif metric == 'gradation':
                     result = replace(result, topology=replace(result.topology,
                         adjacent_size_ratio_max=old.topology.adjacent_size_ratio_max * 1.1))

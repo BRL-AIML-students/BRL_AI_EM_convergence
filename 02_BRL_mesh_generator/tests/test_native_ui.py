@@ -164,3 +164,58 @@ def test_geometry_controls_show_only_applied_inputs(controller):
     assert json.loads(gmsh.onelab.get(ui.CAD_PATH))['visible']
     assert json.loads(gmsh.onelab.get(ui.SHEET_SIGN))['visible']
     assert not json.loads(gmsh.onelab.get(ui.LENGTH))['visible']
+
+
+def test_native_sizing_controls_apply_fields_and_show_applied_global(controller, config):
+    for name,value in [(ui.LENGTH,10),(ui.WIDTH,.6),(ui.TARGET,1),(ui.WIDTH_ENABLED,1)]:
+        gmsh.onelab.setNumber(name,[value])
+    controller.invalidate_if_changed()
+    assert json.loads(gmsh.onelab.get(ui.WIDTH_DIV))['visible']
+    assert 'ready' in action(controller,2)
+    assert controller.scene.sizing.features[0].feature.size==pytest.approx(.2)
+    assert list(gmsh.onelab.getNumber(ui.APPLIED_SIZE))==[1]
+    assert gmsh.model.mesh.field.list().size>0
+    gmsh.onelab.setNumber(ui.WIDTH_DIV,[4])
+    controller.invalidate_if_changed()
+    assert controller.scene is None and list(gmsh.onelab.getNumber(ui.APPLIED_SIZE))==[0]
+    assert 'Blocked:' in action(controller,4)
+    assert not config.output_dir.exists()
+
+
+def test_native_wave_without_user_cap_roundtrips_and_invalidates(controller, config):
+    gmsh.onelab.setNumber(ui.CAP_ENABLED,[0])
+    gmsh.onelab.setNumber(ui.WAVE_ENABLED,[1])
+    gmsh.onelab.setNumber(ui.FREQUENCY,[1e9])
+    controller.invalidate_if_changed()
+    assert not json.loads(gmsh.onelab.get(ui.TARGET))['visible']
+    current=ui.read_controls(config,config.output_dir.parent)
+    assert current.target_size is None and current.sizing.wave.frequency_hz==1e9
+    assert 'ready' in action(controller,2)
+    assert controller.scene.sizing.global_size==pytest.approx(29.9792458)
+    gmsh.onelab.setNumber(ui.FREQUENCY,[2e9])
+    controller.invalidate_if_changed()
+    assert controller.scene is None
+
+
+def test_native_floor_conflict_keeps_no_success_or_output(controller, config):
+    for name,value in [(ui.LENGTH,10),(ui.WIDTH,.6),(ui.TARGET,1),(ui.WIDTH_ENABLED,1),
+                        (ui.FLOOR_ENABLED,1),(ui.FLOOR,.3)]:
+        gmsh.onelab.setNumber(name,[value])
+    assert 'minimum_size_conflict' in action(controller,1)
+    assert controller.scene is None
+    assert not config.output_dir.exists()
+
+
+def test_advanced_json_local_selection_survives_native_read(config):
+    from brl_mesh.config import Configuration
+    data=config.to_dict()
+    data['mesh']['local']={'short_edges':{'entities':[1]},'widths':{'entities':[1]},
+       'gaps':{'pairs':[[1,2]]},'curves':[{'entity':2,'size':.1}],
+       'boxes':[{'bounds':[.2,.2,-.1,.4,.4,.1],'size':.1}],
+       'hold_distance':.02,'transition_distance':1,'max_sampling':5000}
+    base=Configuration.from_dict(data)
+    gmsh.initialize(readConfigFiles=False)
+    try:
+        control=ui.Controller(base,config.output_dir.parent)
+        assert ui.read_controls(base,config.output_dir.parent)==base
+    finally:gmsh.finalize()
