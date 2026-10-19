@@ -1,25 +1,23 @@
 # 02_BRL_mesh_generator 작업 지침
 
-- 이 폴더가 새 BRL mesh generator의 작업 루트다. `../99_archive/BRL_2026-10-19`는 보관 자료로만 읽고 수정·실행 작업 장소로 사용하지 않는다.
-- `docs/rebuild-plan-ko.md`의 요구와 완료 기준을 따른다. 기존 개편 계획서의 기능 요구는 참고하되, 기존 프로그램을 단계적으로 해체하는 구현 순서는 이어받지 않는다.
-- 기존 runtime 모듈을 import하거나 보관된 `.venv`·캐시에 의존하지 않는다. 새 프로젝트 내부에서 별도 환경을 구성한다.
-- 기존 기능은 책임·예외·테스트를 검토한 뒤 필요한 부분만 옮긴다. 과거 입력 형식·보고서 반환 구조·Action 번호를 위한 호환 계층을 기본으로 만들지 않는다. 폐기·미지원 입력은 명확하게 거부한다.
-- Gmsh CAD/mesh API·size field를 활용하고 요소 형상 품질 계산은 `AnalyseMeshQuality`를 우선 검토한다. Jacobian·ICN·IGE 중 실제 판정에 필요한 measure만 선택하고 BRL에는 결과 대응·판정·개선 제어를 둔다. 자동화 목적에 따라 API 경로를 선택할 수 있으나 Plugin과 같은 지표·수치라고 가정하거나 실패 시 조용히 대체하지 않는다.
-- topology·예상 경계와 CAD solid 바깥 방향/열린 sheet 기준 방향 법선은 별도 검사한다. Plugin 통과·표시 숨김을 연결 복구·요소 삭제·outward normal 보증으로 해석하지 않는다.
-- AR·최소각 유지 또는 ICN 중심 기준 전환은 사례 검증으로 확정한다. 기존 임계값을 ICN으로 그대로 환산하거나 검증 전에 기존 필수 검사를 없애지 않는다. 중복 검사·점수 구조를 기본으로 늘리지 않는다.
-- 표면 품질은 `DimensionOfElements=2`, 필요한 measure 선택, mesh 변경 후 `Recompute=1`을 명시한다. 임시 model-based view를 사용하면 element ID 대응과 전체 검사 대상 포함을 확인하고 성공·실패 모두에서 이번 view만 정리한다. 현재 mesh를 재검사하고 개선 악화·불변량 변경 시 정확한 rollback 또는 발행 차단을 수행한다.
-- 점수·등급·보고서·독립 진단·웹 UI·비교 생성은 제품 범위에서 제외한다. 개발 테스트·검증 문서와 제품 산출물을 구분한다.
-- 단위·좌표·connectivity·PID·법선·의도한 열린 경계·간극·rollback·독립 NAS 검증을 보존한다. 기하 검사 통과를 전자기 정확도 보증으로 표현하지 않는다.
-- 테스트·로그·환경·렌더링은 이 로컬 프로젝트나 로컬 임시 폴더에서 수행한다. 클라우드 동기화 폴더에는 검증한 최종 요청 산출물만 전달한다.
-- commit 메시지와 PR 제목·본문·검증 설명은 한글로 작성하고 주요 기술 용어·API 이름은 영문을 유지한다.
-- 2026-10-19 사용자 지시에 따라 구현은 로컬 `codex/rebuild-core` branch에서 단계별로 진행하고 단계별 검증 기록과 의미 있는 commit을 보존한다. 단계마다 GitHub push·PR·merge를 진행하지 않는다.
-- 로컬 구현과 통합 검증이 끝난 뒤 전체 변경을 모아 최종 GitHub PR을 준비한다. 원격 저장소는 사용자가 정하기 전까지 기존 원격을 자동 연결하지 않는다. Merge는 사용자가 명시적으로 지시한 때만 merge commit 방식으로 수행한다.
-- 사용자의 merge 지시에 따른 병합 성공을 확인한 후 해당 작업 branch를 로컬과 원격에서 정리한다. 그 전에는 branch를 삭제하지 않는다. 삭제 전 병합 결과·전환할 기본 branch·미병합 commit·사용자 변경·연결된 worktree를 확인하고 작업 branch만 삭제한다. 병합/검증 실패 또는 추가 작업이 남으면 삭제하지 않고 상태를 보고한다.
-- 활성 작업의 모델은 유지한다. 모델 변경이나 외부 모델 위임은 현재 사용자 지시와 상위 작업 지침을 따른다.
+- 현재 사용 흐름·기본값·범위는 `docs/mesh-generator-guide-ko.html`, 개발 근거·환경·이력은 `docs/validation-ko.md`를 따른다. 문서와 코드를 함께 갱신한다.
+- 기존 `99_archive/BRL_2026-10-19`는 읽기 전용 보관 자료다. 기존 runtime을 import하거나 보관된 환경·캐시에 의존하지 않는다.
+- Strict schema를 유지한다. 과거 입력·Action·보고서 구조의 호환 계층을 기본으로 추가하지 않고 미지원 입력을 명확히 거부한다.
+- Gmsh CAD/mesh API·size field와 `AnalyseMeshQuality` ICN을 사용한다. 사용하지 않는 Jacobian·IGE는 켜지 않는다. Plugin/API의 의미·수치가 같다고 가정하거나 실패 시 조용히 대체하지 않는다.
+- 현재 표면 요소에 `DimensionOfElements=2`, `Recompute=1`을 명시한다. 결과 element ID 전체 대응·유한 양의 값·이번 view만 정리·기존 visibility 보존을 확인한다.
+- AR≤3·최소각≥20° 정책을 임의 ICN 하한으로 환산하지 않는다. Topology·예상 경계·solid outward/sheet 기준 법선은 별도 검사한다.
+- 개선의 연결·ID·PID·entity·경계 node/parameter 불변량과 품질·기하·크기·활성 편차 비악화를 보존한다. 후보 거부는 정확한 rollback 또는 발행 차단으로 처리한다.
+- CAD·설정·field·경계 참조가 바뀌면 재생성을 요구하고 현재 메쉬를 재검사한다. 발행은 임시 NAS·독립 pyNastran 읽기·좌표/ID/connectivity/PID 대조 후 수행한다.
+- 단위·의도한 열린 경계·분리 gap을 보존한다. 요청 길이와 실제 edge 길이, 기하 검사와 EM 정확도, 협력적 자원 검사와 hard cap을 구분한다.
+- 제품 범위에서 score·등급·보고서·독립 진단·웹 UI·비교 생성은 제외한다. 개발 문서·테스트 기록과 제품 출력을 구분한다.
+- 테스트·환경·캐시·중간 산출물은 로컬에서 생성한다. 클라우드 폴더는 읽기 전용 source 또는 검증된 최종 deliverable 전달에만 사용한다.
+- Commit·PR 제목/본문·검증 설명은 한글로 작성하고 기술 용어/API는 영문을 유지한다. 무관한 사용자 변경을 포함하지 않는다.
 
-## GitHub 전달 대상 (2026-10-20 사용자 지정)
+## GitHub와 작업 권한
 
-- 앞으로 수정·PR·merge 대상은 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`이다. 새 구현은 저장소의 `02_BRL_mesh_generator/`에 배치한다.
-- 이번 최종 PR에서 기존 `01_mesh_generator/` 전체와 구 실행·설치·개발 안내를 새 구현으로 대체한다. 기존 기능 호환 계층을 추가하지 않는다. 로컬 `99_archive`는 수정하지 않는다.
-- 로컬 단계별 개발 이력은 유지하고, 대상 저장소의 최신 main에서 전달 branch를 구성한다. 독립된 로컬 source 이력을 대상 main에 그대로 강제 push하지 않는다. 현재 전달 checkout은 `.cache/github-delivery`이며 Git 이력을 보존하는 subtree 통합을 사용한다.
-- PR 작성과 merge는 별도 작업이다. 명시적 merge 지시 전에는 병합하거나 branch를 삭제하지 않는다.
+- 사용자 지정 저장소는 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`, 새 모듈 경로는 `02_BRL_mesh_generator/`다. 이후 수정·PR은 이 저장소를 사용한다.
+- Merge와 작업 branch 삭제는 기본적으로 사용자가 직접 한다. 다만 2026-10-20 사용자가 guide의 PR·merge까지 명시적으로 요청했으므로 이번 문서 PR은 Codex가 merge commit으로 병합한다. Branch 삭제는 요청하지 않았으므로 수행하지 않는다.
+- 로컬에서 변경·검증한 뒤 요청된 PR을 작성/갱신한다. 문서 설명·로컬 저장 요청만으로 원격 게시를 자동 실행하지 않는다.
+- 독립 source 이력과 게시 이력은 parent/SHA가 다르다. Source branch를 원격에 강제 push하지 않는다. 상세 경로·PR 기록은 `docs/validation-ko.md`의 GitHub 절을 먼저 확인한다.
+- `.cache/github-delivery`는 별도 Git checkout이다. 이 경로를 포함한 cache 전체를 무심코 삭제하거나 .git/가상환경을 이동하지 않는다. 이번 guide 작업은 구조 이동을 포함하지 않는다.
+- 활성 작업의 모델을 유지한다. 외부 모델 위임·과금·reset credit 소비를 자동으로 하지 않는다.
