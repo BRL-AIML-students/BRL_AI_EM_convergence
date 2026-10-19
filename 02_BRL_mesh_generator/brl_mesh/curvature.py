@@ -69,8 +69,52 @@ def project(dimension, tag, points, *, trimmed=True):
         if np.max(np.linalg.norm(reconstructed-projected, axis=1)) > max(
                 128*np.finfo(float).eps*scale, gmsh.option.getNumber('Geometry.Tolerance')):
             raise MeshBlocked('projection_incomplete: CAD parameter round-trip 불일치')
-        if trimmed and gmsh.model.isInside(2, tag, parameters.ravel(), parametric=True) != len(points):
-            raise MeshBlocked(f'projection_trim_incomplete: surface {tag}의 trim 밖으로 투영됐습니다')
+        if trimmed:
+            count = gmsh.model.isInside(2, tag, parameters.ravel(), parametric=True)
+            if not 0 <= count <= len(points):
+                raise MeshBlocked('projection_trim_incomplete: trim 분류 개수가 유효하지 않습니다')
+            if count != len(points):
+                mask = []
+                for index, point in enumerate(parameters):
+                    if index % 256 == 0:
+                        checkpoint()
+                    inside = gmsh.model.isInside(2, tag, point, parametric=True)
+                    if inside not in (0, 1):
+                        raise MeshBlocked('projection_trim_incomplete: trim 점 분류 실패')
+                    mask.append(bool(inside))
+                if sum(mask) != count:
+                    raise MeshBlocked('projection_trim_incomplete: trim batch/point 분류 불일치')
+                outside = np.flatnonzero(~np.asarray(mask))
+                curves = sorted({abs(edge) for dim, edge in gmsh.model.getBoundary(
+                    [(2, tag)], combined=False, oriented=False) if dim == 1})
+                if not curves:
+                    raise MeshBlocked('projection_trim_incomplete: CAD trim 경계가 없습니다')
+                best = np.full(len(outside), np.inf)
+                replacements = np.full((len(outside), 3), np.nan)
+                for edge in curves:
+                    if gmsh.model.occ.getMass(1, edge) <= 0:
+                        continue
+                    checkpoint(samples=len(outside))
+                    candidates, _ = project(1, edge, points[outside])
+                    distances = np.linalg.norm(candidates-points[outside], axis=1)
+                    use = distances < best
+                    replacements[use], best[use] = candidates[use], distances[use]
+                if not np.isfinite(best).all():
+                    raise MeshBlocked('projection_trim_incomplete: 유효한 CAD trim 경계가 없습니다')
+                replacement_uv = _array(gmsh.model.getParametrization(2, tag, replacements.ravel()), 2,
+                                        len(outside), 'trim parameters')
+                reconstructed = _array(gmsh.model.getValue(2, tag, replacement_uv.ravel()), 3,
+                                       len(outside), 'trim value')
+                if (np.max(np.linalg.norm(reconstructed-replacements, axis=1)) > max(
+                        128*np.finfo(float).eps*scale, gmsh.option.getNumber('Geometry.Tolerance'))
+                        or gmsh.model.isInside(2, tag, replacement_uv.ravel(), parametric=True) != len(outside)):
+                    raise MeshBlocked('projection_trim_incomplete: 유효한 CAD trim 경계 투영을 구하지 못했습니다')
+                projected[outside] = replacements
+                parameters = _array(gmsh.model.getParametrization(2, tag, projected.ravel()), 2,
+                                    len(points), 'trim parameters')
+                # A valid boundary point gives a conservative mesh-to-CAD
+                # distance. For a planar face it is the trimmed closest point;
+                # no global nearest-point guarantee is inferred on curved CAD.
     return projected, parameters
 
 

@@ -10,7 +10,7 @@ import threading
 
 import gmsh
 
-from .config import CadFile, Configuration, Plate
+from .config import CadFile, Configuration, Plate, Ogive
 from .engine import Scene, generate, publish
 from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
@@ -26,8 +26,11 @@ KIND = PREFIX + '10 Geometry'
 CAD_PATH = PREFIX + '11 CAD file'
 LENGTH = PREFIX + '12 Plate length'
 WIDTH = PREFIX + '13 Plate width'
+DIAMETER = PREFIX + '15 Ogive diameter D'
+OGIVE_LENGTH = PREFIX + '16 Ogive length L'
+THICKNESS = PREFIX + '17 Ogive thickness t'
 ORIGIN = [PREFIX + f'14 Origin {axis}' for axis in 'XYZ']
-INPUT_UNIT = PREFIX + '20 Length unit (plate and BREP)'
+INPUT_UNIT = PREFIX + '20 Length unit (native and BREP)'
 OUTPUT_UNIT = PREFIX + '21 Output unit'
 TARGET = PREFIX + '22 Target size (output unit)'
 SHEET_SIGN = PREFIX + '23 Sheet direction'
@@ -81,7 +84,9 @@ def _parameter(name, value, **options):
 def install_controls(config: Configuration) -> None:
     is_plate = isinstance(config.geometry, Plate)
     plate = config.geometry if is_plate else Plate(100, 60, (0, 0, 0))
-    cad = config.geometry if not is_plate else None
+    ogive = config.geometry if isinstance(config.geometry, Ogive) else Ogive(2, 3)
+    cad = config.geometry if isinstance(config.geometry, CadFile) else None
+    origin = config.geometry.origin if not cad else (0, 0, 0)
     sizing, local = config.sizing, config.sizing.local
     wave = sizing.wave or Wave(1e9)
     curvature = sizing.curvature or Curvature(absolute_tolerance=.01)
@@ -89,10 +94,12 @@ def install_controls(config: Configuration) -> None:
         _parameter(ACTION, ACTIONS[0], choices=list(ACTIONS.values())),
         _parameter(STATUS, 'Ready: choose an Action', readOnly=True),
         _parameter(NAS_PATH, '', readOnly=True),
-        _parameter(KIND, 'plate' if is_plate else 'cad', choices=['plate', 'cad']),
+        _parameter(KIND, 'plate' if is_plate else ('cad' if cad else 'ogive'), choices=['plate', 'ogive', 'cad']),
         _parameter(CAD_PATH, cad.path.as_posix() if cad else '', kind='file'),
         _parameter(LENGTH, plate.length, min=0), _parameter(WIDTH, plate.width, min=0),
-        *[_parameter(name, value) for name, value in zip(ORIGIN, plate.origin)],
+        *[_parameter(name, value) for name, value in zip(ORIGIN, origin)],
+        _parameter(DIAMETER, ogive.diameter, min=0), _parameter(OGIVE_LENGTH, ogive.length, min=0),
+        _parameter(THICKNESS, ogive.thickness, min=0),
         _parameter(INPUT_UNIT, config.length_unit, choices=['m', 'cm', 'mm', 'um']),
         _parameter(OUTPUT_UNIT, config.output_unit, choices=['m', 'cm', 'mm', 'um']),
         _parameter(TARGET, config.target_size if config.target_size is not None else 1, min=0),
@@ -148,8 +155,11 @@ def visibility_signature():
 
 def update_visibility() -> None:
     is_plate = gmsh.onelab.getString(KIND) == ['plate']
-    visibility = {CAD_PATH: not is_plate, SHEET_SIGN: not is_plate,
-                  **{name: is_plate for name in [LENGTH, WIDTH, *ORIGIN]},
+    is_ogive = gmsh.onelab.getString(KIND) == ['ogive']
+    visibility = {CAD_PATH: not is_plate and not is_ogive, SHEET_SIGN: not is_plate and not is_ogive,
+                  **{name: is_plate for name in [LENGTH, WIDTH]},
+                  **{name: is_plate or is_ogive for name in ORIGIN},
+                  **{name: is_ogive for name in [DIAMETER, OGIVE_LENGTH, THICKNESS]},
                   TARGET: _flag(CAP_ENABLED), FLOOR: _flag(FLOOR_ENABLED),
                   **{name: _flag(WAVE_ENABLED) for name in [FREQUENCY, WAVE_DIV, EPSILON, MU]},
                   FALLBACK: not _flag(CAP_ENABLED) and not _flag(WAVE_ENABLED),
@@ -212,6 +222,9 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
     if kind == 'plate':
         geometry = {'kind': 'plate', 'length': _number(LENGTH), 'width': _number(WIDTH),
                     'origin': [_number(name) for name in ORIGIN]}
+    elif kind == 'ogive':
+        geometry = {'kind': 'ogive', 'diameter': _number(DIAMETER), 'length': _number(OGIVE_LENGTH),
+                    'thickness': _number(THICKNESS), 'origin': [_number(name) for name in ORIGIN]}
     elif kind == 'cad':
         geometry = value['geometry'] if isinstance(base.geometry, CadFile) else {'kind': 'cad'}
         geometry = geometry | {'path': _string(CAD_PATH)}
@@ -224,7 +237,7 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
         else:
             geometry['sheet_normal'] = sign
     else:
-        raise ConfigurationError('Geometry: plate 또는 cad가 필요합니다')
+        raise ConfigurationError('Geometry: plate, ogive 또는 cad가 필요합니다')
     enabled = _integer(IMPROVE)
     if enabled not in (0, 1):
         raise ConfigurationError('Improve if needed: 0 또는 1이 필요합니다')

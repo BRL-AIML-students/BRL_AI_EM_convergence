@@ -1,6 +1,6 @@
 # BRL mesh generator 재작성 계획
 
-작성일: 2026-10-19. 상태: 0–5단계 구현·로컬 검증 완료. 추가 primitive와 복잡 CAD 통합 검증인 6단계는 미완료. 자원 검사는 native 호출 전후의 협력적 검사이며 강제 native 중단/allocator 제한은 아니다.
+작성일: 2026-10-19, 갱신일: 2026-10-20. 상태: 0–6단계의 로컬 구현·자동 통합 검증 완료. GitHub 대상 선택·최종 PR·명시적 지시에 따른 merge는 대기 중이다. 자원 검사는 native 호출 전후의 협력적 검사이며 강제 native 중단/allocator 제한은 아니다. UI의 마우스/외관 시각 QA는 미실행이다.
 
 ## 확정한 작업 위치
 
@@ -127,11 +127,11 @@
 | 5 | 편차 기반 곡률·필요 시 DiscretizationError feedback·자원 제한 | 원당 목표 200 초과 요구, 구·작은 필렛·ogive tip·미충족 처리; 요소 품질 Plugin 설계는 단계 1·2에서 검증 |
 | 6 | 통합 검증·기본 실행 경로 확정 | 단순·복잡 CAD, 정상/실패 NAS, 부가 산출물 없음, 문서·실행 경로 일치 |
 
-현재 완료 상태: 0–5단계 완료, 6단계 미착수. 5단계는 CAD API의 요소별 편차와 곡률 callback·재생성·현재 mesh 발행 검사를 연결했으며 `DiscretizationError`는 원본 ID·projection 성공 계약 때문에 채택하지 않았다. [5단계 기록](stage-5-validation-ko.md)에 실제 자원 검사 범위와 한계를 남긴다. 원래 BRL 경로에 남은 접근 제한 캐시의 삭제는 미완료지만 보관된 소스와 새 프로젝트의 개발에는 영향을 주지 않는다. 이번 구현에서는 보관본·원래 캐시·권한을 변경하지 않았다.
+현재 완료 상태: 0–6단계의 로컬 구현·자동 검증 완료. [5단계](stage-5-validation-ko.md)의 CAD API 편차 feedback과 협력적 자원 제어에 이어 [6단계](stage-6-validation-ko.md)에서 native ogive D/L/t·trim 경계 편차·복잡 CAD 재현성·CLI/FLTK를 통합 검증했다. 원래 BRL 경로의 접근 제한 캐시 삭제, 수동 UI 시각 QA, GitHub 처리는 완료로 표시하지 않는다. 보관본·원래 캐시·권한은 변경하지 않았다.
 
 각 단계는 검증 가능한 크기로 나누어 구현하고 필요한 테스트·예제·UI/CLI·문서를 함께 관리한다. 단계 1이 동작하기 전에는 새 생성기가 완료됐다고 표현하지 않는다.
 
-CLI/ONELAB은 직접 생성하는 단일 판(+Z)과 STEP/IGES/BREP 파일을 지원한다. 3단계에서 mixed BREP·단위·surface PID·열린 sheet 기준·solid 바깥 법선·현재 mesh 재검사를 연결했다. 추가 primitive 입력은 형상별 요구 검증과 함께 확장한다. [1단계](stage-1-validation-ko.md), [2단계](stage-2-validation-ko.md), [3단계](stage-3-validation-ko.md) 기록에 각 시점의 범위와 제한을 구분한다.
+CLI/ONELAB은 native 판(+Z), tangent-ogive D/L/t(+Z), STEP/IGES/BREP 파일을 지원한다. 3단계의 mixed BREP·단위·PID·방향·현재 mesh 검사와 6단계의 native ogive 및 trim 경계 처리를 연결했다. 각 단계 기록은 당시 범위와 제한을 구분하며 향후 다른 primitive는 별도 요구에 따라 확장한다.
 
 현재 개선 설정은 `improvement.enabled=true`, `max_passes=3`이 기본이며 max_passes는 0–10 정수다. 개선을 꺼도 필수 검사와 NAS 발행 차단은 유지한다. topology 기대 경계와 연결 성분은 관측된 삼각형의 구멍 대신 CAD 경계·surface adjacency에서 구성한다. 분리 의도와 sheet 방향은 CAD schema/ONELAB 입력과 연결했으며 필요한 검사를 생략하지 않는다. 설정·CAD source SHA256·CAD topology/기하 fingerprint·Physical Group/PID·point/curve mesh 경계의 생성 참조가 바뀌면 재생성을 요구한다. 현재 mesh의 검사는 발행 직전에 다시 수행한다.
 

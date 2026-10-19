@@ -4,7 +4,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 ## 현재 상태
 
-2026-10-19: 0–5단계의 독립 코어·품질/rollback·STEP/IGES/BREP·native ONELAB·특징별 크기장·편차 기반 곡률 feedback과 자원 검사를 구현했습니다. 직접 생성하는 primitive는 현재 XY 평면의 직사각형 판(+Z)이며, CAD 파일에서는 solid와 열린 sheet 및 mixed BREP의 독립 curve/point를 읽습니다. 6단계의 추가 primitive와 복잡 CAD 통합 검증이 남아 있습니다.
+2026-10-20: 0–6단계의 로컬 코어와 자동 통합 검증을 완료했습니다. native plate·ogive D/L/t, STEP/IGES/BREP, 공통 ONELAB·CLI, 특징별 크기장, 편차 feedback, 품질·topology·법선·rollback, 독립 NAS 검증을 연결했습니다. GitHub 대상 지정과 최종 PR·사용자 지시에 따른 merge는 아직 진행하지 않았습니다. native UI의 실제 event loop·Action 발행은 검증했고 마우스 조작·widget 외관의 시각 QA는 미실행입니다.
 
 - [재작성 계획](docs/rebuild-plan-ko.md)
 - [기존 BRL 보관 기록](docs/archive-record-ko.md)
@@ -14,6 +14,8 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 - [3단계 CAD·ONELAB 검증 기록](docs/stage-3-validation-ko.md)
 - [4단계 특징별 크기장 검증 기록](docs/stage-4-validation-ko.md)
 - [5단계 곡률·편차·자원 검증 기록](docs/stage-5-validation-ko.md)
+- [6단계 native ogive·통합 검증 기록](docs/stage-6-validation-ko.md)
+- [최종 GitHub 전달 준비](docs/github-delivery-ko.md)
 
 ## 설치·실행
 
@@ -32,6 +34,9 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 # 곡면 편차 feedback / 원당 223 분할 요구
 .\run_cli.bat examples\cylinder.json
 .\run_cli.bat examples\circle_223.json
+# native ogive: 열린 sheet / 유한 두께 solid
+.\run_cli.bat examples\ogive.json
+.\run_cli.bat examples\ogive_wall.json
 # native Gmsh 창과 ONELAB
 .\run_gmsh_ui.bat examples\plate.json
 ```
@@ -56,7 +61,7 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 
 | 입력 | 단위 적용 |
 |---|---|
-| plate·BREP | `length_unit`에서 `output_unit`으로 한 번 변환 |
+| plate·ogive·BREP | `length_unit`에서 `output_unit`으로 한 번 변환 |
 | STEP·IGES | 파일에 저장된 단위를 `output_unit`으로 변환; `length_unit`을 중복 적용하지 않음 |
 | `mesh.target_size`·`geometry.protected_gap` | 이미 `output_unit` 기준인 요청값 |
 
@@ -65,6 +70,21 @@ Gmsh ONELAB·CLI에서 현재 설정으로 1차 삼각형 표면 메쉬를 생�
 solid 경계는 CAD의 바깥 방향을 검사합니다. 열린 sheet는 `geometry.sheet_normal=1` 또는 `-1`로 CAD parameter normal의 기준 방향을 명시합니다. 면별 설정은 `sheet_normals={"7": -1}`처럼 surface tag별로 지정하며, 면별 값이 공통 `sheet_normal`보다 우선합니다. 필요한 방향이 빠지거나 solid 경계를 sheet로 지정하면 차단합니다. 음의 기준은 생성 winding에 적용하고 최종 현재 mesh에서도 다시 검사합니다.
 
 PID는 변환 후 CAD surface tag와 같고 Physical Group으로 관리합니다. 재질 번호가 아니며 CAD를 수정하거나 Gmsh build가 바뀌어도 같은 tag가 유지된다는 보장은 없습니다. 고급 면별 방향과 `separated_surfaces`/`protected_gap`은 시작 JSON에 지정하며 ONELAB에서도 그 설정을 유지합니다. `separated_surfaces`는 공유 CAD 경계가 없는 surface 쌍에 대한 분리 의도입니다. `protected_gap`은 기존 node/edge 근접 검사의 tolerance 충돌 판정에 사용하며, 별도 `mesh.local.gaps.enabled=true`가 분리 CAD 사이의 최소 거리 측정과 gap size field를 활성화합니다. 전체 공간의 최소 간극 보증이나 같은 face의 접힘 측정은 하지 않습니다.
+
+### Native ogive
+
+`run_gmsh_ui.bat examples/ogive.json`으로 시작하고 `Generate + publish NAS`를 선택합니다. `Geometry=ogive`에서 `Ogive diameter D`, `Ogive length L`, `Ogive thickness t`, `Origin X/Y/Z`를 조정합니다. D/L/t/origin은 `Length unit (native and BREP)`, 크기·허용 편차는 `Output unit` 기준입니다. CLI도 같은 JSON을 받습니다.
+
+```json
+"geometry": {"kind": "ogive", "diameter": 2, "length": 3,
+             "thickness": 0.2, "origin": [0, 0, 0]}
+```
+
+D는 base 외경, L은 base부터 +Z tip까지의 길이입니다. t=0이면 base가 열린 sheet 두 면, t>0이면 내측 원호를 같은 중심에서 t만큼 offset한 한 solid의 경계 표면을 생성합니다. base 내경은 D−2t이며 내부 tip은 외부 tip보다 낮습니다. 예를 들어 D=2·L=3·t=.2 mm이면 생성 원호 R=5 mm, 내부 R=4.8 mm, 내부 tip 높이 약 2.6533 mm입니다.
+
+지원 조건은 `D>0`, `L>D/2`, `0<=t<D/2`입니다. 반구 endpoint L=D/2는 현재 반회전·boolean 생성 경로에서 지원하지 않아 입력 단계에서 거부합니다. 단위 변환·origin·두께가 좌표 정밀도에서 표현되지 않는 경우도 거부합니다. 입력에 과거 D/L/t 별칭을 추가하지 않으며 JSON 키는 위 이름을 사용합니다.
+
+원호 → 180° 회전 → 복사·180° 회전 → sheet fragment 또는 solid fuse를 native OCC로 수행합니다. STEP 중간 파일을 생성하지 않습니다. 생성 보조 center/section은 model에 남기지 않고 origin 위치에서 직접 구성합니다. 열린 native ogive는 해석적인 바깥 방향을 sheet 기준으로 잡으며, solid는 CAD 안/밖을 검사합니다. t나 단위 등 설정이 바뀌면 재생성해야 합니다.
 
 ## 전역·국소 크기장
 
@@ -118,7 +138,7 @@ ONELAB에서는 `BRL/Sizing`의 cap·파장·하한과 `BRL/Local`의 자동 규
 
 Gmsh `setSizeCallback`에서 기존 field 결과와 곡률 목표의 최솟값을 적용합니다. 원당 전역 `MeshSizeFromCurvature`는 0이며, seam도 곡률 경계 제어에 포함합니다. feedback은 초과한 face/curve별 배율과 해당 face의 경계 목표를 줄이므로 한 face 전체를 보수적으로 세분화할 수 있습니다. 형상/PID는 유지하되 재생성으로 node/element ID·연결은 바뀔 수 있습니다. node relocation 단계의 연결 보존·정확한 rollback 계약과 구분합니다.
 
-현재 CAD를 유지한 채 원본 element ID별로 triangle 내부·edge와 CAD boundary line의 projection 거리를 측정하고, surface projection의 parameter round-trip과 trim 포함을 확인합니다. `DiscretizationError`는 공식 소스 검토 후 원본 ID·projection 성공 계약 때문에 채택하지 않았습니다. 실패 시 다른 측정으로 조용히 대체하지 않습니다. 임시 편차 view나 파일은 만들지 않습니다. 설정한 최종 표본의 편차 검사를 개선 후보와 NAS 발행 직전 현재 mesh에서 다시 수행하고, 개선 수용 시 최대 편차 비율의 비악화도 요구합니다.
+현재 CAD를 유지한 채 원본 element ID별로 triangle 내부·edge와 CAD boundary line의 projection 거리를 측정하고, surface projection의 parameter round-trip과 trim 포함을 확인합니다. 구멍의 chord처럼 underlying surface 투영이 trim 밖이면 실제 face 경계 curve들에서 유효한 점을 찾아 거리를 측정하고 trim/round-trip을 다시 확인합니다. 평면에서는 trimmed closest distance이고 일반 곡면에서는 보수적인 유효 CAD 점까지의 거리이며 전역 최근접점 보증은 아닙니다. 후보를 검증할 수 없으면 차단합니다. `DiscretizationError`는 공식 소스 검토 후 원본 ID·projection 성공 계약 때문에 채택하지 않았습니다. 임시 편차 view나 파일은 만들지 않습니다. 설정한 최종 표본의 편차 검사를 개선 후보와 NAS 발행 직전 현재 mesh에서 다시 수행하고, 개선 수용 시 최대 편차 비율의 비악화도 요구합니다.
 
 편차는 유한 표본의 mesh→CAD 거리입니다. 일반 CAD의 연속 최대 편차·양방향 Hausdorff 거리·EM 정확도를 보증하지 않습니다. 표본 수를 늘리면 측정값과 비용이 달라질 수 있습니다. `minimum_size`와 요구가 충돌하거나 반복/자원 한도에 도달하면 요청을 clamp해 성공 처리하지 않고 발행을 차단합니다.
 
@@ -146,7 +166,7 @@ ONELAB의 `BRL/Curvature`에서 활성화·절대/상대 편차·재생성 횟�
 
 ```powershell
 New-Item -ItemType Directory -Path .cache\tests -Force | Out-Null
-.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage5
+.\.venv\Scripts\python.exe -B -X utf8 -m pytest --basetemp .cache\tests\stage6
 ```
 
 Windows Gmsh DLL과 pytest의 기본 native FD capture 충돌을 피하도록 `--capture=sys`를 프로젝트 설정에 포함했습니다. 제품의 보고서·진단 파일 생성과 개발 테스트 기록은 구분합니다.

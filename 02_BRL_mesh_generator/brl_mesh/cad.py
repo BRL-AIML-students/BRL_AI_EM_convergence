@@ -6,7 +6,7 @@ import hashlib
 
 import gmsh
 
-from .config import CadFile, Configuration, Plate
+from .config import CadFile, Configuration, Plate, Ogive
 from .errors import ConfigurationError, MeshBlocked
 
 # Explicit OpenCASCADE output-unit identifiers, verified with each importer.
@@ -115,6 +115,9 @@ def build_geometry(config: Configuration) -> CadReference:
             raise ConfigurationError('좌표 정밀도 범위에서 판의 길이/폭을 표현할 수 없습니다')
         face = gmsh.model.occ.addRectangle(x, y, z, length, width)
         signs = {face: 1}
+    elif isinstance(geometry, Ogive):
+        from .ogive import build
+        signs = build(geometry, config.unit_scale)
     else:
         import_cad(geometry, config)
         signs = dict(geometry.sheet_normals)

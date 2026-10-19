@@ -36,6 +36,14 @@ class Plate:
 
 
 @dataclass(frozen=True)
+class Ogive:
+    diameter: float
+    length: float
+    thickness: float = 0
+    origin: tuple[float, float, float] = (0, 0, 0)
+
+
+@dataclass(frozen=True)
 class CadFile:
     path: Path
     sheet_normal: int | None = None
@@ -56,7 +64,7 @@ class Improvement:
 
 @dataclass(frozen=True)
 class Configuration:
-    geometry: Plate | CadFile
+    geometry: Plate | Ogive | CadFile
     length_unit: str
     output_unit: str
     target_size: float | None
@@ -74,6 +82,9 @@ class Configuration:
         if isinstance(geometry, Plate):
             value = {'kind': 'plate', 'length': geometry.length, 'width': geometry.width,
                      'origin': list(geometry.origin)}
+        elif isinstance(geometry, Ogive):
+            value = {'kind': 'ogive', 'diameter': geometry.diameter, 'length': geometry.length,
+                     'thickness': geometry.thickness, 'origin': list(geometry.origin)}
         else:
             value = {'kind': 'cad', 'path': str(geometry.path)}
             if geometry.sheet_normal is not None:
@@ -117,6 +128,9 @@ class Configuration:
                       *(x * config.unit_scale for x in geometry.origin)]
             if not all(math.isfinite(x) for x in scaled) or min(scaled[:2]) <= 0:
                 raise ConfigurationError("단위 변환 결과가 유효하지 않습니다")
+        elif isinstance(geometry, Ogive):
+            from .ogive import parameters
+            parameters(geometry, config.unit_scale)
         return config
 
     @classmethod
@@ -141,19 +155,32 @@ def _surface_id(value: object) -> int:
     return int(value)
 
 
-def _geometry(value: object, base: Path) -> Plate | CadFile:
+def _origin(value):
+    origin = value.get('origin', [0, 0, 0])
+    if not isinstance(origin, (list, tuple)) or len(origin) != 3:
+        raise ConfigurationError('geometry.origin: 좌표 3개가 필요합니다')
+    return tuple(_number(x, 'geometry.origin') for x in origin)
+
+
+def _geometry(value: object, base: Path) -> Plate | Ogive | CadFile:
     if not isinstance(value, dict):
         raise ConfigurationError('geometry: object가 필요합니다')
     if value.get('kind') == 'plate':
         geometry = _object(value, {'kind', 'length', 'width', 'origin'}, {'kind', 'length', 'width'}, 'geometry')
-        origin = geometry.get('origin', [0, 0, 0])
-        if not isinstance(origin, (list, tuple)) or len(origin) != 3:
-            raise ConfigurationError('geometry.origin: 좌표 3개가 필요합니다')
         return Plate(_number(geometry['length'], 'geometry.length', positive=True),
                      _number(geometry['width'], 'geometry.width', positive=True),
-                     tuple(_number(x, 'geometry.origin') for x in origin))
+                     _origin(geometry))
+    if value.get('kind') == 'ogive':
+        geometry = _object(value, {'kind', 'diameter', 'length', 'thickness', 'origin'},
+                           {'kind', 'diameter', 'length'}, 'geometry')
+        diameter = _number(geometry['diameter'], 'geometry.diameter', positive=True)
+        length = _number(geometry['length'], 'geometry.length', positive=True)
+        thickness = _number(geometry.get('thickness', 0), 'geometry.thickness')
+        if length <= diameter/2 or not 0 <= thickness < diameter/2:
+            raise ConfigurationError('ogive: L > D/2 및 0 <= t < D/2가 필요합니다')
+        return Ogive(diameter, length, thickness, _origin(geometry))
     if value.get('kind') != 'cad':
-        raise ConfigurationError('geometry.kind: plate 또는 cad를 사용하세요')
+        raise ConfigurationError('geometry.kind: plate, ogive 또는 cad를 사용하세요')
     geometry = _object(value, {'kind', 'path', 'sheet_normal', 'sheet_normals', 'separated_surfaces', 'protected_gap'},
                        {'kind', 'path'}, 'geometry')
     path = geometry['path']
