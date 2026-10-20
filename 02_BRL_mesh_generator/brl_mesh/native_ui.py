@@ -16,7 +16,6 @@ from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
 from .model import snapshot
 from .sizing_config import Wave, Curvature
-from .resources import resource_scope
 
 PREFIX = 'BRL/'
 ACTION = PREFIX + '00 Action'
@@ -83,10 +82,6 @@ REL_TOL = PREFIX + 'Curvature/Relative tolerance'
 CURV_ITERATIONS = PREFIX + 'Curvature/Maximum regenerations'
 CURV_SAMPLING = PREFIX + 'Curvature/Sampling nodes per edge'
 CURV_VERIFY = PREFIX + 'Curvature/Verification nodes per edge'
-RESOURCE_CONTROLS = {key: PREFIX+'Resources/'+label for key, label in {
-    'max_nodes': 'Maximum nodes', 'max_triangles': 'Maximum triangles',
-    'max_memory_mb': 'Process memory limit MiB', 'max_seconds': 'Work time limit seconds',
-    'max_projection_samples': 'Maximum projection samples'}.items()}
 ACTIONS = {0: 'Idle', 1: 'Generate + publish NAS', 2: 'Generate mesh',
            3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close'}
 SHEET_DIRECTIONS = {'Not specified': 0, 'CAD normal +': 1, 'CAD normal -': -1}
@@ -126,7 +121,7 @@ def install_controls(config: Configuration) -> None:
                        cad.sheet_normal if cad and cad.sheet_normal else (1 if is_plate else 0)],
                    choices=list(SHEET_DIRECTIONS)),
         _parameter(IMPROVE, int(config.improvement.enabled), choices=[0, 1]),
-        _parameter(PASSES, config.improvement.max_passes, min=0, max=10, step=1),
+        _parameter(PASSES, config.improvement.max_passes, min=0, step=1),
         _parameter(OUTPUT, config.output_dir.as_posix()),
         _parameter(APPLIED_SIZE, 0, readOnly=True),
         _parameter(CAP_ENABLED, int(config.target_size is not None), choices=[0, 1]),
@@ -140,7 +135,8 @@ def install_controls(config: Configuration) -> None:
         _parameter(FLOOR, sizing.minimum_size if sizing.minimum_size is not None else .01, min=0),
         _parameter(SHORT_ENABLED, int(local.short_edges.enabled), choices=[0, 1]),
         _parameter(SHORT_DIV, local.short_edges.divisions, min=1),
-        _parameter(WIDTH_ENABLED, int(local.widths.enabled), choices=[0, 1]),
+        _parameter(WIDTH_ENABLED, int(local.widths.enabled), choices=[0, 1],
+                   help='직선 경계의 볼록 평면만 지원합니다. ogive/sphere/cylinder에서는 해제하세요.'),
         _parameter(WIDTH_DIV, local.widths.divisions, min=1),
         _parameter(GAP_ENABLED, int(local.gaps.enabled), choices=[0, 1]),
         _parameter(GAP_DIV, local.gaps.divisions, min=1),
@@ -155,12 +151,9 @@ def install_controls(config: Configuration) -> None:
         _parameter(ABS_TOL, curvature.absolute_tolerance or .01, min=0),
         _parameter(REL_ENABLED, int(curvature.relative_tolerance is not None), choices=[0, 1]),
         _parameter(REL_TOL, curvature.relative_tolerance or .001, min=0),
-        _parameter(CURV_ITERATIONS, curvature.max_iterations, min=0, max=10, step=1),
-        _parameter(CURV_SAMPLING, curvature.sampling_nodes, min=3, max=100, step=1),
-        _parameter(CURV_VERIFY, curvature.verification_nodes, min=3, max=100, step=1),
-        *[_parameter(name, getattr(config.resources, key), min=1 if key not in
-                     ('max_seconds', 'max_memory_mb') else 0)
-          for key, name in RESOURCE_CONTROLS.items()],
+        _parameter(CURV_ITERATIONS, curvature.max_iterations, min=0, step=1),
+        _parameter(CURV_SAMPLING, curvature.sampling_nodes, min=3, step=1),
+        _parameter(CURV_VERIFY, curvature.verification_nodes, min=3, step=1),
     ]
     gmsh.onelab.set(json.dumps(parameters, ensure_ascii=False))
     update_visibility()
@@ -202,8 +195,7 @@ def update_visibility() -> None:
         elif name in (ABS_ENABLED, REL_ENABLED):
             options['choices'] = [0, 1]
         elif name in (CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY):
-            options.update(min=0 if name == CURV_ITERATIONS else 3,
-                           max=10 if name == CURV_ITERATIONS else 100, step=1)
+            options.update(min=0 if name == CURV_ITERATIONS else 3, step=1)
         elif name == DIHEDRAL_ANGLE:
             options.update(min=0, max=180)
         elif name != CAD_PATH and name not in ORIGIN:
@@ -302,12 +294,36 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
         mesh['curvature'] = curvature
     else:
         mesh.pop('curvature', None)
-    resources = {key: (_number(name) if key in ('max_seconds', 'max_memory_mb') else _integer(name))
-                 for key, name in RESOURCE_CONTROLS.items()}
     value.update(geometry=geometry, length_unit=_string(INPUT_UNIT), output_unit=_string(OUTPUT_UNIT),
-                 mesh=mesh, resources=resources, output_dir=_string(OUTPUT),
+                 mesh=mesh, output_dir=_string(OUTPUT),
                  improvement={'enabled': bool(enabled), 'max_passes': _integer(PASSES)})
     return Configuration.from_dict(value, base_dir)
+
+
+def display_mesh(*, fit=False):
+    """Only generation fits the camera; idle and publication preserve the view."""
+    gmsh.model.setVisibility(gmsh.model.getEntities(), 1)
+    for name, value in {'Mesh.SurfaceEdges': 1, 'Mesh.SurfaceFaces': 1,
+                        'Mesh.Points': 0, 'Geometry.Points': 0, 'Geometry.Curves': 0,
+                        'Geometry.Surfaces': 0}.items():
+        gmsh.option.setNumber(name, value)
+    if fit:
+        # OCC synchronize has refreshed Gmsh's model bounding box.
+        bounds = gmsh.model.getBoundingBox(-1, -1)
+        spans = [bounds[i+3]-bounds[i] for i in range(3)]
+        # Gmsh projects the unrotated XY box. Account for the Z extent before
+        # applying an oblique view, so a long ogive cannot extend off screen.
+        dx, dy = [gmsh.option.getNumber('General.Max'+axis)-gmsh.option.getNumber('General.Min'+axis)
+                  for axis in 'XY']
+        aspect = gmsh.option.getNumber('General.GraphicsHeight')/gmsh.option.getNumber('General.GraphicsWidth')
+        scale = .8*min(max(dx, dy/aspect), max(dy, dx*aspect))/math.hypot(*spans)
+        gmsh.option.setNumber('General.Trackball', 0)
+        for axis, angle in zip('XYZ', (-60, 0, 30)):
+            gmsh.option.setNumber('General.Rotation'+axis, angle)
+            gmsh.option.setNumber('General.Translation'+axis, 0)
+            gmsh.option.setNumber('General.Scale'+axis, scale)
+    if gmsh.fltk.isAvailable():
+        gmsh.graphics.draw()
 
 
 class Controller:
@@ -318,6 +334,7 @@ class Controller:
         self.close_requested = False
         install_controls(base)
         self.visible_state = visibility_signature()
+        self.kind = _string(KIND)
         self.ui_dirty = False
 
     def status(self, message: str, path: str = '') -> None:
@@ -330,8 +347,16 @@ class Controller:
             gmsh.onelab.setNumber(APPLIED_SIZE, [size])
             self.ui_dirty = True
 
-    def invalidate_if_changed(self) -> None:
+    def invalidate_if_changed(self, *, deep=True) -> None:
         try:
+            kind = _string(KIND)
+            if kind != self.kind:
+                self.kind = kind
+                if kind in ('ogive', 'sphere', 'cylinder') and not _flag(CURVATURE_ENABLED):
+                    for name, value in ((CURVATURE_ENABLED, 1), (ABS_ENABLED, 0),
+                                        (REL_ENABLED, 1), (REL_TOL, .001)):
+                        gmsh.onelab.setNumber(name, [value])
+                    self.ui_dirty = True
             state = visibility_signature()
             if state != self.visible_state:
                 update_visibility()
@@ -339,7 +364,12 @@ class Controller:
                 self.ui_dirty = True
             if self.scene is None:
                 return
-            self.scene.require_current(read_controls(self.base, self.base_dir))
+            current = read_controls(self.base, self.base_dir)
+            if current != self.scene.cad.config:
+                raise MeshBlocked('설정이 생성 시점과 다릅니다. 다시 생성하세요')
+            if not deep:
+                return
+            self.scene.require_current(current)
             if self.last_mesh is not None:
                 from .model import assert_current
                 try:
@@ -369,9 +399,9 @@ class Controller:
             return
         if action == 0:
             return
+        self.invalidate_if_changed(deep=False)
         config = read_controls(self.base, self.base_dir)
-        with resource_scope(config.resources):
-            self._perform(action, config)
+        self._perform(action, config)
 
     def _perform(self, action: int, config: Configuration) -> None:
         self.invalidate_if_changed()
@@ -380,12 +410,15 @@ class Controller:
             self.scene, self.last_mesh = None, None
             gmsh.clear()  # This process owns the complete Gmsh session.
             self.scene = generate(config)
+            display_mesh(fit=True)
             mesh = self._prepare(config)
+            display_mesh()
             if action == 2:
                 self.status('Mesh ready: required checks passed')
                 return
         elif action == 3:
             self._prepare(config)
+            display_mesh()
             self.status('Current mesh checked; improvement completed if needed')
             return
         else:
@@ -412,7 +445,7 @@ class Controller:
         except Exception as exc:
             gmsh.onelab.setString(ACTION, [ACTIONS[0]])
             self.ui_dirty = True
-            self.status(f'Blocked: {exc}')
+            self.status(f'Blocked: {exc}; 이번 실행 NAS 없음')
 
 
 def launch(config: Configuration, base_dir: Path) -> None:
@@ -432,7 +465,7 @@ def launch(config: Configuration, base_dir: Path) -> None:
             gmsh.fltk.wait(.2)
             if not gmsh.fltk.isAvailable():
                 break
-            controller.invalidate_if_changed()
+            controller.invalidate_if_changed(deep=False)
             controller.dispatch()
             # update() rebuilds ONELAB widgets; wait() already pumps UI events.
             if controller.ui_dirty and not controller.close_requested:

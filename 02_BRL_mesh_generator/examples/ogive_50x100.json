@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "ogive", "diameter": 50, "length": 100, "thickness": 0},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {
+    "target_size": 10,
+    "minimum_size": 0.01,
+    "wave": {"frequency_hz": 1000000000},
+    "curvature": {"absolute_tolerance": 0.01, "relative_tolerance": 0.001}
+  },
+  "output_dir": "../outputs"
+}

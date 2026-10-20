@@ -5,6 +5,7 @@ The legacy BRL GRID/CTRIA3/ENDDATA contract is retained; runtime code is indepen
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import numpy as np
 from pyNastran.bdf.bdf import BDF
@@ -20,13 +21,16 @@ def _real(value: float) -> str:
     return text if any(c in text for c in '.eE') else text + '.0'
 
 
-def write(path: Path, mesh: SurfaceMesh, output_unit: str) -> None:
+def write(path: Path, mesh: SurfaceMesh, output_unit: str, *, geometry=None, length_unit=None) -> None:
     mesh.validate()
     if output_unit not in UNIT_METRES:
         raise MeshBlocked("NAS의 길이 단위가 유효하지 않습니다")
     # Exclusive creation also protects existing output if this function is called directly.
     with path.open('x', encoding='ascii', newline='\n') as stream:
         stream.write(f'$ BRL surface mesh\n$ length unit: {output_unit}\n')
+        if geometry is not None:
+            stream.write('$ geometry input: '+json.dumps(geometry, ensure_ascii=True, sort_keys=True)+'\n')
+            stream.write('$ geometry length unit: '+str(length_unit)+'\n')
         for node, point in zip(mesh.node_ids, mesh.coordinates):
             stream.write(f'GRID,{int(node)},,{",".join(_real(x) for x in point)}\n')
         for eid, pid, nodes in zip(mesh.element_ids, mesh.pids, mesh.connectivity):

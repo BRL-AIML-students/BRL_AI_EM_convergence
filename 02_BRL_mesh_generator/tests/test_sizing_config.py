@@ -37,13 +37,12 @@ def test_invalid_sizing_schema_is_rejected_without_worker_execution(mesh):
     with pytest.raises(ConfigurationError):Configuration.from_dict(BASE|{'mesh':mesh})
 
 
-def test_advanced_sizing_round_trip_preserves_entity_selection_and_limits():
+def test_advanced_sizing_round_trip_preserves_entity_selection():
     mesh={'wave':{'frequency_hz':1e9,'relative_permittivity':2},'minimum_size':.01,
         'fallback_fraction':.2,'local':{'short_edges':{'enabled':True,'entities':[2],'divisions':4},
         'widths':{'enabled':True,'entities':[1],'divisions':6},'gaps':{'enabled':True,'pairs':[[1,2]],'divisions':4},
         'curves':[{'entity':3,'size':.2}],'boxes':[{'bounds':[0,0,0,1,1,1],'size':.3}],
-        'hold_distance':0,'transition_distance':2,'sampling_fraction':.125,'max_sampling':2000,
-        'max_pair_tests':123,'max_features':10}}
+        'hold_distance':0,'transition_distance':2,'sampling_fraction':.125}}
     config=Configuration.from_dict(BASE|{'mesh':mesh})
     assert Configuration.from_dict(json.loads(json.dumps(config.to_dict())))==config
     assert 'target_size' not in config.to_dict()['mesh']

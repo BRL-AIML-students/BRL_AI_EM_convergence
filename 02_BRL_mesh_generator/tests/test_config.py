@@ -43,7 +43,7 @@ def test_duplicate_json_key_is_not_silently_overwritten(tmp_path):
 
 
 @pytest.mark.parametrize('settings', [
-    {'enabled': 1}, {'max_passes': True}, {'max_passes': -1}, {'max_passes': 11},
+    {'enabled': 1}, {'max_passes': True}, {'max_passes': -1},
     {'max_passes': 1.5}, {'methods': ['Smooth']},
 ])
 def test_invalid_improvement_controls_are_rejected(settings):

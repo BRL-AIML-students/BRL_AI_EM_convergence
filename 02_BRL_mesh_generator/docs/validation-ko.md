@@ -10,6 +10,32 @@
 - 문서 정리 전 게시 head: `bcf7ad0460d07c7dd01db297fe86136c7923b277`, tree `9964f2ab9ad2f78eb3965ec9d5a3594325968bd8`.
 - 앞선 문서 정리 작업은 guide·README·개발 지침만 변경했다. 아래 통합 수치 시험은 당시 기존 실행의 기록이며 문서 작업 중 새로 수행한 결과가 아니다.
 
+## 2026-10-20 generator 재검토 수정
+
+수정 전 source `cdd74a1becd689db96b91a1edeaed4412268b3df`, 게시 main `20539bad4c21a390f8ea83613a015814b0449ad8`에서 시작했다. 상세 원인·수정 결정은 [재검토 계획 및 구현 기록](generator-reassessment-plan-ko.md)에 있다. 아래의 이전 통합 수치/hash와 구분한다.
+
+- Ogive의 pole 유한 해상도를 중복 축소하던 곡률 feedback을 수정했다. 실제 편차 검증·minimum_size 충돌·AR/최소각·ICN·topology·법선·rollback·NAS 독립 대조는 유지한다.
+- 동일 CAD·좌표·ID·연결·surface·1D 경계 요소의 검증된 편차만 재사용한다. 변경된 mesh의 편차 위반과 경계 선 요소 제거 시 재계산/차단 시험을 통과했다.
+- Resources 모듈·ONELAB 항목·JSON schema와 국소 표본/특징/쌍/크기 감사 및 topology 작업량 중단 조건을 삭제했다. 표본/반복 입력의 고정 상한과 강제 단일-thread 설정도 제거했다. 사용자 지정 알고리즘 반복 횟수, 유효한 수치·CAD·품질 검사는 유지한다.
+- Native 곡면의 Widths는 model 삭제 전에 거부한다. 곡면으로 전환하면 비활성 Curvature를 상대 .001로 켜며 이후 사용자가 직접 해제할 수 있다. UI 기본 ogive 전환 → Generate + publish NAS도 실제 생성·검사·발행을 통과했다.
+- 생성 후 triangles·faces 표시와 bbox/viewport 맞춤을 적용한다. Idle은 무거운 CAD/mesh 재검사·카메라 재설정을 하지 않으며 Action/발행에서는 현재 상태를 검사한다. 잘못된 확대/이동 상태에서 cube→D50/L100 ogive→sphere→179° dihedral로 전환하는 실제 FLTK 렌더링을 확인했다. 독립 재읽기한 조밀한 ogive NAS도 전체 형상이 화면에 들어왔다.
+- 성공 NAS 폴더명에 형상/치수를, 파일 주석에 geometry와 입력 단위를 넣었다. 실패 상태는 이번 실행의 NAS가 없음을 명시한다. 제품 sidecar는 추가하지 않았다.
+
+| 검증 | 결과 |
+|---|---|
+| D50/L100/t0 mm, target 10, minimum .01, absolute .01, relative .001 | 33,375절점 / 66,536삼각형; 첫 24,916삼각형 q=1.33913 → 재생성 1회 후 q=.757532 |
+| 독립 해석 ogive 거리, barycentric n=10/19/37 | .00755071 / .00757532 / .00759446 mm; 지정 .01 mm 이내 |
+| 형상 품질 및 NAS | AR max 2.47228 / 최소각 23.9532°; 필수 검사·독립 좌표/ID/connectivity/PID 대조 통과 |
+| 복잡한 fillet BREP, target .15 / absolute .01 | 초기 4,012삼각형 q=1.80625 → 4,256삼각형 q=.946149; 두 실행 NAS bytes 동일. 이전 4,236개에서의 변화는 새 feedback의 8개 face 재분할에 따른 것 |
+| 동일 CAD/field의 Algorithm 5/6 대조 | 폭 제어 판은 둘 다 통과. D2/L3 ogive δ=.02에서 5는 최소각16.6604°·shape 위반2개, 6은26.4020°·위반0개. 현행6 유지 |
+| Guide | 16 section·23 table·6 MathML·7 SVG. 태그 중첩·ID·목차/로컬 링크·inline XML 검증 통과 |
+
+전체 회귀는 **332 passed in 442.04s**였다. 이후 추가한 기본 곡면 전환 발행·native thread 설정 보존 검사를 포함해 `tests/test_reassessment.py` **10 passed in 45.61s**를 다시 확인했다. 최종 수집 항목은 334개이며 추가 두 항목은 후속 10개 실행에 포함된다. 저장소 pytest 옵션(`--capture=sys`, `--import-mode=importlib`)을 유지했다. Runtime AST/compileall 및 `git diff --check`도 통과했다.
+
+D50/L100 검증 명령은 `.\.venv\Scripts\python.exe -X utf8 -m tools.reassessment_acceptance`, 화면 맞춤은 `-m tools.reassessment_display`다. 최종 D50 실행은 349.69초였으며 다른 회귀 검사와 동시 실행한 관측값이다. 처리 시간 보증이 아니다. 기본 Gmsh 4.15.2 session의 General.NumThreads=1, Mesh.MaxNumThreads1D/2D/3D=0을 확인했으며 엔진이 별도 상한을 강제하지 않는다.
+
+검증된 NAS 한 파일을 `outputs/run_ogive_diameter50_length100_thickness0_a1607459b3844a839b3c10464bb3bde0/mesh.nas`에 두고 검증 원본과 SHA256을 대조했다. 개발 증거와 실행 산출물은 Git에 포함하지 않는다.
+
 ## 2026-10-20 native UI 깜빡임 수정
 
 - 대상: `brl_mesh/native_ui.py`, `tests/test_native_ui.py`, guide의 Idle 설명. Launcher·생성 알고리즘·검사/발행 기준은 변경하지 않았다.
@@ -46,11 +72,11 @@ New-Item -ItemType Directory -Force .cache\tests | Out-Null
 | 단위·CAD | STEP/STP/IGES/IGS × m/cm/mm/um, 첫 IGES import의 새 프로세스, mixed BREP의 독립 sheet/curve/point·한 번의 scaling·PID 보존, 한글/공백 경로 |
 | 품질 Plugin | sparse/reordered element ID 대응, 누락·중복·비유한 결과 차단, 변경 후 Recompute, 기존 view·visibility 보존, 이번 view 정리 |
 | topology·방향 | 정상 형상이지만 공유 node가 끊어진 사례, T-junction, nonmanifold edge/vertex, 뒤집힌 winding, solid inward, sheet 기준 누락, 예상 경계/성분과 불일치 |
-| 국소 크기장 | 회전에도 같은 최소 폭, 독립 특징별 목표, 공유 경계와 자유 gap 구분, bbox false candidate 이후 실제 거리, 최소 크기·sampling·쌍/특징 한도, field 변조 |
-| 곡률 | 구·원·cylinder·작은 fillet·ogive tip, 200 초과 분할 요구, 극점·seam/null curve 구분, 투영/trim 실패, 편차/최소 크기/재생성 예산 충돌 |
+| 국소 크기장 | 회전에도 같은 최소 폭, 독립 특징별 목표, 공유 경계와 자유 gap 구분, bbox false candidate 이후 실제 거리, 최소 크기·거리 표본, field 변조 |
+| 곡률 | 구·원·cylinder·작은 fillet·ogive tip, 200 초과 분할 요구, 극점·seam/null curve 구분, 투영/trim 실패, 편차/최소 크기/재생성 조건 충돌 |
 | 개선 | 실제 Relocate2D/Laplace2D, 형상 개선·비악화, 경계 좌표/parameter와 연결/ID/PID/entity 보존, 정확한 rollback, 구조 변경·복구 실패 차단 |
 | 현재 상태 | CAD 파일/설정/Physical Group/field/경계 mesh 변경 무효화, 수동 mesh 수정 후 새 검사, CAD 위 node 이동이어도 triangle 편차 초과 시 차단 |
-| 발행 | strict NAS와 독립 pyNastran 읽기, 좌표·ID·node 순서·connectivity·PID 변조 차단, 쓰기/읽기/최종 자원 실패 때 pending만 정리·기존 정상 NAS 보존 |
+| 발행 | strict NAS와 독립 pyNastran 읽기, 좌표·ID·node 순서·connectivity·PID 변조 차단, 쓰기/읽기 실패 때 pending만 정리·기존 정상 NAS 보존 |
 | CLI·UI | 상태 JSON 및 종료 코드, ONELAB idle 중복 발행 없음·오류 Action 소비, 실제 FLTK window/event loop·API-injected Action·finalize, CLI와 NAS bytes 일치 |
 
 Runtime·테스트·예제·개발 도구 60개 파일이 원본 source와 전달 checkout에서 바이트 단위로 일치했고, 게시 최종 tree도 검증한 checkout과 같았다. 루트 설치 wrapper의 `-Dev`/`-UpdateLock` 전달, PowerShell 구문, workspace JSON, README 링크, `git diff --check`도 확인했다. 전달 checkout에서 설치 다운로드 전체를 다시 실행하지는 않았다.
@@ -105,7 +131,7 @@ Gmsh 4.15.2에서 기준 edge (0,0)→(1,0), 세 번째 점 (x,h)의 104개 1차
 
 ## 한계와 미실행 항목
 
-자동 폭은 단일 loop·직선 경계·볼록 평면만 지원한다. 임의 neck·자기 근접·전체 공간 최소 gap 지도는 아니다. Topology는 node/edge 중심이며 모든 face/face 교차 부재를 증명하지 않는다. 편차는 mesh→CAD 유한 표본이며 양방향 Hausdorff/연속 최대 거리 보증이 아니다. Resource 검사는 native 전후의 협력적 검사이지 allocator/peak memory hard cap·강제 native 중단이 아니다. UI의 실제 lifecycle/Action과 widget 외관·마우스 수동 QA는 다르며 후자는 미실행이다. NAS·기하 검사 통과로 EM 관측량 정확도·수렴을 보장하지 않는다.
+자동 폭은 단일 loop·직선 경계·볼록 평면만 지원한다. 임의 neck·자기 근접·전체 공간 최소 gap 지도는 아니다. Topology는 node/edge 중심이며 모든 face/face 교차 부재를 증명하지 않는다. 편차는 mesh→CAD 유한 표본이며 양방향 Hausdorff/연속 최대 거리 보증이 아니다. UI의 실제 lifecycle/Action과 자체 FLTK 렌더링을 확인했다. 사용자 창의 마우스 수동 QA와는 구분한다. NAS·기하 검사 통과로 EM 관측량 정확도·수렴을 보장하지 않는다.
 
 ## 문서 통합과 이전 기록의 위치
 

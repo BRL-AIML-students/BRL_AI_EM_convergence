@@ -21,7 +21,6 @@ class BoundaryIntent:
     separated_surfaces: frozenset[tuple[int, int]] = field(default_factory=frozenset)
     protected_gap: float | None = None
     relative_tolerance: float = 1e-9
-    max_candidate_tests: int = 200_000
 
 
 @dataclass(frozen=True)
@@ -83,7 +82,6 @@ def inspect_topology(mesh: SurfaceMesh, intent: BoundaryIntent) -> TopologyValue
     issues = []
     if (type(intent.expected_components) is not int or intent.expected_components < 1
             or not np.isfinite(intent.relative_tolerance) or not 0 < intent.relative_tolerance < 0.01
-            or type(intent.max_candidate_tests) is not int or intent.max_candidate_tests < 1
             or (intent.protected_gap is not None and (not np.isfinite(intent.protected_gap) or intent.protected_gap <= 0))):
         return TopologyValues((Issue('invalid_topology_intent', '검사 조건이 유효하지 않습니다', 'incomplete'),),
                               0, frozenset(), float('inf'))
@@ -140,16 +138,12 @@ def inspect_topology(mesh: SurfaceMesh, intent: BoundaryIntent) -> TopologyValue
     exact = np.maximum(numeric, lengths * 32 * np.finfo(float).eps)
     tolerance = np.maximum(exact, lengths * intent.relative_tolerance)
     tree = _Boxes(np.minimum(a, b) - tolerance[:, None], np.maximum(a, b) + tolerance[:, None])
-    codes, candidate_tests = set(), 0
+    codes = set()
     for node, point in zip(map(int, mesh.node_ids), mesh.coordinates):
         for ei in tree.candidates(point):
             edge = tuple(map(int, edge_nodes[ei]))
             if node in edge:
                 continue
-            candidate_tests += 1
-            if candidate_tests > intent.max_candidate_tests:
-                issues.append(Issue('topology_budget', '공간 검사 한도에 도달했습니다', 'incomplete'))
-                return TopologyValues(tuple(issues), count, boundary, adjacent_ratio)
             edge_surfaces = {int(mesh.surface_tags[owner[0]]) for owner in edges[edge]}
             if all(tuple(sorted((s, t))) in separated for s in node_surfaces[node] for t in edge_surfaces):
                 continue

@@ -29,11 +29,9 @@ def action(controller, code):
     return gmsh.onelab.getString(ui.STATUS)[0]
 
 
-def test_curvature_resources_controls_roundtrip_and_invalidation(config):
+def test_curvature_controls_roundtrip_and_invalidation(config):
     from brl_mesh.sizing_config import Curvature
-    from brl_mesh.resources import Resources
-    configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(.001, .002, 2, 7, 13)),
-                         resources=Resources(max_seconds=25, max_projection_samples=100000))
+    configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(.001, .002, 2, 7, 13)))
     gmsh.initialize(readConfigFiles=False)
     try:
         gmsh.option.setNumber('General.Terminal', 0)
@@ -47,8 +45,6 @@ def test_curvature_resources_controls_roundtrip_and_invalidation(config):
         assert 'Blocked:' in action(controller, 4)
         gmsh.onelab.setNumber(ui.CURVATURE_ENABLED, [0])
         assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature is None
-        gmsh.onelab.setNumber(ui.RESOURCE_CONTROLS['max_triangles'], [1])
-        assert 'resource_mesh_limit' in action(controller, 1)
         assert not configured.output_dir.exists()
     finally:
         gmsh.finalize()
@@ -277,7 +273,7 @@ def test_advanced_json_local_selection_survives_native_read(config):
     data['mesh']['local']={'short_edges':{'entities':[1]},'widths':{'entities':[1]},
        'gaps':{'pairs':[[1,2]]},'curves':[{'entity':2,'size':.1}],
        'boxes':[{'bounds':[.2,.2,-.1,.4,.4,.1],'size':.1}],
-       'hold_distance':.02,'transition_distance':1,'max_sampling':5000}
+       'hold_distance':.02,'transition_distance':1}
     base=Configuration.from_dict(data)
     gmsh.initialize(readConfigFiles=False)
     try:

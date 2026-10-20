@@ -15,7 +15,6 @@ from .preservation import GeometryValues, measure_geometry
 from .quality import read_icn
 from .topology import BoundaryIntent, TopologyValues, inspect_topology
 from .validation import Issue, require_pass
-from .resources import checkpoint
 
 
 @dataclass(frozen=True)
@@ -72,7 +71,6 @@ def cad_boundary_intent(expected_components: int, **kwargs) -> BoundaryIntent:
 
 
 def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
-    checkpoint(mesh=True)
     mesh.validate()
     assert_current(mesh)
     shape = measure_shape(mesh)
@@ -119,5 +117,4 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
     longest = max(float(np.linalg.norm(xyz[:, (i + 1) % 3] - xyz[:, i], axis=1).max()) for i in range(3))
     ratio = longest / contract.target_size if np.isfinite(contract.target_size) and contract.target_size > 0 else float('inf')
     noise = 64 * np.finfo(float).eps * max(float(np.max(np.abs(mesh.coordinates))), longest)
-    checkpoint()
     return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise, local_ratio, deviation_ratio)

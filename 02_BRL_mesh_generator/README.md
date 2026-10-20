@@ -20,7 +20,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev
 
 ONELAB의 `BRL/00 Action`에서 `Generate + publish NAS`를 선택하고 `BRL/01 Status`와 `BRL/02 NAS path`를 확인합니다. `Generate mesh`는 검사·필요한 개선까지 수행하지만 NAS는 쓰지 않습니다. `Publish current mesh`는 현재 메쉬를 재검사하고 발행합니다. 일반 Gmsh File/Export는 BRL 발행 검사를 호출하지 않습니다.
 
-정상 결과는 `outputs/run_<id>/mesh.nas` 한 파일입니다. CLI는 정상 0·입력/실행 오류 1·검사 차단 2를 반환합니다. Native plate·ogive·sphere·cube·cylinder·dihedral과 STEP/IGES/BREP를 지원합니다. 형상 정의·파라미터별 그림·단위·기본값은 guide의 4장을 확인하세요. 새 입력 예제는 `examples/sphere.json`, `cube.json`, `cylinder_native.json`, `dihedral.json`이며 기존 `cylinder.json`은 CAD import 예제입니다.
+정상 결과는 `outputs/run_<형상>_<치수>_<id>/mesh.nas` 한 파일입니다. CLI는 정상 0·입력/실행 오류 1·검사 차단 2를 반환합니다. Native plate·ogive·sphere·cube·cylinder·dihedral과 STEP/IGES/BREP를 지원합니다. 형상 정의·파라미터별 그림·단위·기본값은 guide의 4장을 확인하세요. 새 입력 예제는 `examples/sphere.json`, `cube.json`, `cylinder_native.json`, `dihedral.json`이며 기존 `cylinder.json`은 CAD import 예제입니다.
+
+D=50 mm, L=100 mm, t=0 ogive의 곡률 편차 0.01 mm 설정은 `examples/ogive_50x100.json`에 있습니다. `run_gmsh_ui.bat examples\ogive_50x100.json`으로 열고 `Generate + publish NAS`를 실행하세요. 생성 완료 시 새 메쉬 전체를 화면에 맞추며 NAS 주석에 입력 형상과 단위를 기록합니다.
 
 ## 개발과 관리
 

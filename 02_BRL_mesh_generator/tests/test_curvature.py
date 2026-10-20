@@ -133,6 +133,31 @@ def test_changed_current_mesh_fails_absolute_gate_at_publish(tmp_path):
     assert not config.output_dir.exists()
 
 
+def test_verified_deviation_reuse_tracks_boundary_mesh_and_cad(tmp_path, monkeypatch):
+    config = config_for(tmp_path, 'disk')
+    with mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        plan, calls = scene.curvature, []
+        original = plan.measure
+        def measured(*args, **kwargs):
+            calls.append(True)
+            return original(*args, **kwargs)
+        monkeypatch.setattr(plan, 'measure', measured)
+        assert plan.deviation_ratio(mesh) <= 1
+        assert not calls
+        # Surface triangles alone do not describe all inputs to curve deviation.
+        edge = min(plan.curves)
+        ids = gmsh.model.mesh.getElementsByType(1, edge)[0]
+        gmsh.model.mesh.removeElements(1, edge, list(map(int, ids)))
+        with pytest.raises(MeshBlocked, match='deviation_incomplete'):
+            plan.deviation_ratio(mesh)
+        assert len(calls) == 1
+        key = curve._measurement_key(mesh)
+        gmsh.model.occ.translate(gmsh.model.getEntities(2), 0, 0, 1)
+        gmsh.model.occ.synchronize()
+        assert curve._measurement_key(mesh) != key
+
+
 def test_local_radius_and_relative_feature_scales_do_not_use_global_bbox(tmp_path):
     config = config_for(tmp_path, 'mixed_curvature', relative_tolerance=.001)
     gmsh.initialize(readConfigFiles=False)
