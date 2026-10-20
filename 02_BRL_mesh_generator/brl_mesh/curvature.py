@@ -158,11 +158,13 @@ class CurvaturePlan:
         self.history = []
         self.verified = None
         self.faces = {tag for _, tag in gmsh.model.getEntities(2)}
-        self.curves = {abs(tag) for face in self.faces for dim, tag in
-                       gmsh.model.getBoundary([(2, face)], combined=False, oriented=False) if dim == 1}
-        self.curve_faces = {curve: tuple(sorted(face for face in self.faces if curve in
-                            {abs(t) for d, t in gmsh.model.getBoundary([(2, face)], combined=False, oriented=False) if d == 1}))
-                            for curve in self.curves}
+        curve_faces = {}
+        for face in sorted(self.faces):
+            for dim, tag in gmsh.model.getBoundary([(2, face)], combined=False, oriented=False):
+                if dim == 1:
+                    curve_faces.setdefault(abs(tag), set()).add(face)
+        self.curves = set(curve_faces)
+        self.curve_faces = {curve: tuple(sorted(faces)) for curve, faces in curve_faces.items()}
         self.point_curves = {tag: tuple(int(c) for c in gmsh.model.getAdjacencies(0, tag)[0] if c in self.curves)
                              for _, tag in gmsh.model.getEntities(0)}
         magnitude = max(abs(v) for face in self.faces for v in gmsh.model.getBoundingBox(2, face))
@@ -269,7 +271,8 @@ class CurvaturePlan:
         for dim, tag in sorted(self.tolerances):
             if dim == 2:
                 indices = np.flatnonzero(mesh.surface_tags == tag)
-                ids, xyz = mesh.element_ids[indices], mesh.triangles()[indices]
+                ids = mesh.element_ids[indices]
+                xyz = mesh.coordinates[np.searchsorted(mesh.node_ids, mesh.connectivity[indices])]
                 if not len(ids):
                     raise MeshBlocked(f'deviation_incomplete: surface {tag} 요소 누락')
             else:
