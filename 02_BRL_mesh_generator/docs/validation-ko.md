@@ -10,6 +10,16 @@
 - 문서 정리 전 게시 head: `bcf7ad0460d07c7dd01db297fe86136c7923b277`, tree `9964f2ab9ad2f78eb3965ec9d5a3594325968bd8`.
 - 앞선 문서 정리 작업은 guide·README·개발 지침만 변경했다. 아래 통합 수치 시험은 당시 기존 실행의 기록이며 문서 작업 중 새로 수행한 결과가 아니다.
 
+## 2026-10-20 후속 코드 점검
+
+후속 코드 점검은 아래 수정이 PR #20으로 병합된 source `38d459e` / 게시 main `60d10631051dcf75066ae0a907d33be7f0a810aa`를 기준으로 진행했다.
+
+- 곡률 계획의 면–curve 인접 관계는 각 면의 경계를 한 번만 읽어 구성한다. `combined=False`, seam 중복 제거, 정렬된 인접 face와 null pole 처리를 유지한다.
+- 편차 측정은 해당 face의 connectivity만 좌표로 변환한다. 각 face마다 전체 mesh의 삼각형 좌표 배열을 다시 만들던 중복 할당·검색을 제거했다.
+- 기존 commit의 `CurvaturePlan`과 수정본을 같은 실제 CAD/mesh에서 실행해 curve/face/point 인접 관계, 허용값, 모든 `(dimension, entity, element ID, deviation)` 및 entity별 ratio가 정확히 같음을 확인했다. Sphere 984개, ogive 770개, 26-face fillet 3,077개 측정값 전체를 대조했다.
+- 계획 구성 중 face 경계 API 호출은 sphere 4→1회, ogive 14→2회, fillet 1,482→26회로 감소했다. 같은 환경의 단회 편차 측정 시간에는 일관된 감소가 없었으므로 전체 생성 속도 향상을 수치로 주장하지 않는다. 측정 표본·허용값·품질/발행 기준은 그대로다.
+- 관련 회귀 `tests/test_curvature.py tests/test_reassessment.py`는 **35 passed in 113.63s**였다. 실제 곡면 재분할, projection/trim 실패 차단, 변경된 mesh/경계 재검사, minimum-size 충돌, UI 표시·기본 전환·NAS 발행을 포함한다. 직전 전체 회귀를 다시 반복하지 않았다.
+
 ## 2026-10-20 generator 재검토 수정
 
 수정 전 source `cdd74a1becd689db96b91a1edeaed4412268b3df`, 게시 main `20539bad4c21a390f8ea83613a015814b0449ad8`에서 시작했다. 상세 원인·수정 결정은 [재검토 계획 및 구현 기록](generator-reassessment-plan-ko.md)에 있다. 아래의 이전 통합 수치/hash와 구분한다.
