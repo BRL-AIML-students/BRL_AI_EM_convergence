@@ -24,16 +24,6 @@ class Feature:
     bounds: tuple[float, ...] | None = None
 
 
-class Budget:
-    def __init__(self, limit):
-        self.limit, self.used = limit, 0
-
-    def consume(self, count=1):
-        self.used += count
-        if self.used > self.limit:
-            raise MeshBlocked('feature_measurement_incomplete: CAD 쌍/폭 측정 한도에 도달했습니다')
-
-
 def surface_curves():
     mapping, seams = {}, set()
     for _, surface in gmsh.model.getEntities(2):
@@ -44,7 +34,7 @@ def surface_curves():
     return mapping, seams
 
 
-def polygon_width(surface, budget):
+def polygon_width(surface):
     """Minimum supporting-line width of a convex, planar, straight-edge face.
 
     This is orientation invariant and resolves a long thin rectangle. It is not
@@ -56,7 +46,6 @@ def polygon_width(surface, budget):
     if len(loops) != 1:
         raise MeshBlocked(f'width_unsupported: surface {surface}의 hole/multiple loop')
     curves = [abs(int(t)) for t in loops[0]]
-    budget.consume(len(curves)*len(curves))
     links = defaultdict(list)
     for curve in curves:
         if gmsh.model.getType(1, curve) != 'Line':
@@ -121,14 +110,12 @@ def discover(config, global_size):
         return ()
     mapping, seams = surface_curves()
     all_surfaces, all_curves = set(mapping), {tag for tags in mapping.values() for tag in tags}
-    budget, result = Budget(local.max_pair_tests), []
+    result = []
     def append(feature):
         if not math.isfinite(feature.size) or feature.size <= 0:
             raise MeshBlocked(f'feature_size_incomplete: {feature.kind} 길이를 표현하지 못했습니다')
         if feature.size < global_size*(1-1e-12):
             result.append(feature)
-            if len(result) > local.max_features:
-                raise MeshBlocked('feature_measurement_incomplete: 특징 개수 한도에 도달했습니다')
     if local.short_edges.enabled:
         chosen = set(local.short_edges.entities) if local.short_edges.entities else all_curves - seams
         if chosen - all_curves or (local.short_edges.entities and chosen & seams):
@@ -145,7 +132,7 @@ def discover(config, global_size):
         if chosen - all_surfaces:
             raise ConfigurationError('widths.entities: 실제 surface tag가 필요합니다')
         for surface in sorted(chosen):
-            width = polygon_width(surface, budget)
+            width = polygon_width(surface)
             append(Feature('width', (surface,), width, width/local.widths.divisions,
                            mapping[surface], surface))
     if local.gaps.enabled:
@@ -159,7 +146,6 @@ def discover(config, global_size):
         explicit = bool(local.gaps.pairs)
         pairs = local.gaps.pairs if explicit else independent_pairs(components, owners)
         for a, b in pairs:
-            budget.consume()
             if a not in all_surfaces or b not in all_surfaces:
                 raise ConfigurationError('gaps.pairs: 실제 surface tag 쌍이 필요합니다')
             if components[a] == components[b] or owners[a] & owners[b]:

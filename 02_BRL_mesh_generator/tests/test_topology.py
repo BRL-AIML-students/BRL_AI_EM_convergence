@@ -29,12 +29,10 @@ def test_t_junction_is_detected_even_if_boundaries_are_allowed(scale):
     assert 't_junction' in codes(inspect_topology(mesh, BoundaryIntent(exposed_edges(mesh), 2)))
 
 
-def test_ambiguous_near_edge_and_budget_are_incomplete():
+def test_ambiguous_near_edge_is_incomplete():
     mesh = junction(1e-11)
     result = inspect_topology(mesh, BoundaryIntent(exposed_edges(mesh), 2))
     assert any(x.code == 'ambiguous_proximity' and x.status == 'incomplete' for x in result.issues)
-    budget = inspect_topology(mesh, BoundaryIntent(exposed_edges(mesh), 2, max_candidate_tests=1))
-    assert any(x.code == 'topology_budget' and x.status == 'incomplete' for x in budget.issues)
 
 
 def test_nonmanifold_edge_and_vertex():
@@ -68,7 +66,7 @@ def test_expected_components_and_boundary_are_checked(square):
     assert {'unexpected_components', 'unexpected_boundary'} <= codes(result)
 
 
-@pytest.mark.parametrize('change', [{'max_candidate_tests': 0}, {'relative_tolerance': float('nan')}, {'protected_gap': 0}])
+@pytest.mark.parametrize('change', [{'relative_tolerance': float('nan')}, {'protected_gap': 0}])
 def test_invalid_audit_settings_are_incomplete(square, change):
     result = inspect_topology(square, replace(BoundaryIntent(exposed_edges(square), 1), **change))
     assert any(x.status == 'incomplete' for x in result.issues)

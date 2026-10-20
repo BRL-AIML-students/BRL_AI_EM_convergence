@@ -63,9 +63,6 @@ class SizingPlan:
         """
         coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 3)
         result = np.full(len(coordinates), self.global_size)
-        work = len(coordinates)*sum(max(1, len(item.feature.curves)) for item in self.features)
-        if work > 50_000_000:
-            raise MeshBlocked('local_size_audit_incomplete: 국소 크기 감사 작업 한도에 도달했습니다')
         for item in self.features:
             feature = item.feature
             if feature.bounds is not None:
@@ -131,28 +128,27 @@ def resolve_global(config):
 
 def curve_sampling(curves, size, hold, transition, settings):
     spacing = settings.sampling_fraction*min(size, transition, hold if hold > 0 else size)
-    maximum = settings.max_sampling
     if spacing <= 0 or not math.isfinite(spacing):
         raise MeshBlocked('sampling_incomplete: 거리 field 표본 간격을 표현하지 못했습니다')
     requested = 2*max(gmsh.model.occ.getMass(1, c) for c in curves)/spacing
     if not math.isfinite(requested):
         raise MeshBlocked('sampling_incomplete: 필요한 표본 수가 유한 범위를 초과했습니다')
     count = max(8, math.ceil(requested)+2)
-    while count <= maximum:
+    while True:
         stable = True
         for curve in curves:
             low, high = gmsh.model.getParametrizationBounds(1, curve)
             points = np.asarray(gmsh.model.getValue(1, curve, np.linspace(low[0], high[0], count))).reshape(-1, 3)
             lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
             mass = gmsh.model.occ.getMass(1, curve)
-            if (not np.isfinite(points).all() or not len(lengths) or
-                    lengths.max() > spacing or lengths.sum() < .999*mass):
+            if not np.isfinite(points).all() or not len(lengths):
+                raise MeshBlocked('sampling_incomplete: CAD 거리 표본이 유효하지 않습니다')
+            if lengths.max() > spacing or lengths.sum() < .999*mass:
                 stable = False
                 break
         if stable:
             return count
         count *= 2
-    raise MeshBlocked(f'sampling_incomplete: 필요한 Distance.Sampling={count}, 한도={maximum}; 요구를 clamp하지 않습니다')
 
 
 def apply_sizing(config):

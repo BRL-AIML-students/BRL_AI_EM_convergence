@@ -19,7 +19,6 @@ from .model import SurfaceMesh, snapshot, assert_current
 from .errors import MeshBlocked
 from .sizing import SizingPlan, apply_sizing
 from .curvature import CurvaturePlan
-from .resources import checkpoint, resource_scope
 
 
 def boundary_state() -> tuple:
@@ -55,9 +54,6 @@ class Scene:
 
 def configure_mesh(config: Configuration) -> None:
     gmsh.option.setNumber('General.Terminal', 0)
-    gmsh.option.setNumber('General.NumThreads', 1)
-    for dimension in (1, 2, 3):
-        gmsh.option.setNumber(f'Mesh.MaxNumThreads{dimension}D', 1)
     for key, value in {'RandomSeed': 1, 'Algorithm': 6, 'ElementOrder': 1, 'RecombineAll': 0,
                        'MeshSizeFromPoints': 0, 'MeshSizeFromCurvature': 0,
                        'MeshSizeExtendFromBoundary': 0}.items():
@@ -66,26 +62,17 @@ def configure_mesh(config: Configuration) -> None:
 
 def generate(config: Configuration) -> Scene:
     """Build in an owned, empty session; shared by the CLI and native UI."""
-    with resource_scope(config.resources):
-        return _generate(config)
-
-
-def _generate(config: Configuration) -> Scene:
     if gmsh.model.getEntities():
         raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
     configure_mesh(config)
     reference = build_geometry(config)
-    checkpoint()
     sizing = apply_sizing(config)
-    checkpoint()
     curvature = CurvaturePlan(config, sizing) if config.sizing.curvature is not None else None
     for face, sign in reference.sheet_signs.items():
         gmsh.model.mesh.setReverse(2, face, sign < 0)
     while True:
-        checkpoint()
         with curvature.callback() if curvature else nullcontext():
             gmsh.model.mesh.generate(2)
-        checkpoint(mesh=True)
         if curvature is None:
             break
         current = snapshot(reference.membership)
@@ -100,7 +87,6 @@ def _generate(config: Configuration) -> Scene:
         gmsh.model.mesh.clear()
     fixed_boundary = boundary_state()
     def geometry_check(mesh):
-        checkpoint(mesh=True)
         reference.require_current(config)
         sizing.require_current()
         if boundary_state() != fixed_boundary:
@@ -139,24 +125,22 @@ class RunResult:
 
 def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
     """Reinspect the current mesh against its generation reference before output."""
-    with resource_scope(config.resources):
-        return _publish(mesh, config, scene)
-
-
-def _publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
-    checkpoint(mesh=True)
     assert_current(mesh)
     scene.require_current(config)
     current = snapshot(scene.membership)
     inspect_mesh(current, scene.contract).require_pass()
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    run_name = 'run_' + uuid.uuid4().hex
+    geometry = config.to_dict()['geometry']
+    dimensions = '_'.join(f'{key}{geometry[key]:g}' for key in
+                          ('diameter', 'length', 'thickness', 'radius', 'side', 'height')
+                          if key in geometry)
+    run_name = f"run_{geometry['kind']}_{dimensions}_{uuid.uuid4().hex}"
     stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
     final = config.output_dir / run_name
     try:
-        nas.write(stage / 'mesh.nas', current, config.output_unit)
+        nas.write(stage / 'mesh.nas', current, config.output_unit,
+                  geometry=geometry, length_unit=config.length_unit)
         nas.validate(stage / 'mesh.nas', current)
-        checkpoint(mesh=True)
         stage.rename(final)
         return RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
     finally:
@@ -165,7 +149,7 @@ def _publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResul
 
 
 def run(config: Configuration) -> RunResult:
-    with resource_scope(config.resources), mesh_model(config) as scene:
+    with mesh_model(config) as scene:
         prepared = improve(scene.membership, scene.contract, config.improvement)
         prepared.inspection.require_pass()
         return replace(publish(prepared.mesh, config, scene), attempts=prepared.attempts)

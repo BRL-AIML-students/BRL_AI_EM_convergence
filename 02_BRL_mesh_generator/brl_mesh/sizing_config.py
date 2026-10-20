@@ -50,9 +50,6 @@ class LocalSizing:
     transition_distance: float | None = None
     growth_rate: float = .3
     sampling_fraction: float = .25
-    max_sampling: int = 4096
-    max_pair_tests: int = 10000
-    max_features: int = 4096
 
 
 @dataclass(frozen=True)
@@ -169,10 +166,7 @@ def parse_sizing(value):
     sampling = number(local.get('sampling_fraction', .25), 'sampling_fraction', positive=True)
     if sampling > .5:
         raise ConfigurationError('sampling_fraction: 0.5 이하여야 합니다')
-    settings = LocalSizing(short, widths, gaps, tuple(curves), tuple(boxes), hold, transition, growth, sampling,
-                           integer(local.get('max_sampling', 4096), 'max_sampling', 8, 100000),
-                           integer(local.get('max_pair_tests', 10000), 'max_pair_tests'),
-                           integer(local.get('max_features', 4096), 'max_features'))
+    settings = LocalSizing(short, widths, gaps, tuple(curves), tuple(boxes), hold, transition, growth, sampling)
     curvature = None
     if 'curvature' in mesh:
         data = obj(mesh['curvature'], set(Curvature.__dataclass_fields__), set(), 'curvature')
@@ -182,11 +176,11 @@ def parse_sizing(value):
             raise ConfigurationError('curvature: absolute_tolerance 또는 relative_tolerance가 필요합니다')
         if tolerances.get('relative_tolerance', 0) >= 1:
             raise ConfigurationError('relative_tolerance: 1보다 작아야 합니다')
-        sampling = integer(data.get('sampling_nodes', 10), 'sampling_nodes', 3, 100)
-        verification = integer(data.get('verification_nodes', 19), 'verification_nodes', 3, 100)
+        sampling = integer(data.get('sampling_nodes', 10), 'sampling_nodes', 3)
+        verification = integer(data.get('verification_nodes', 19), 'verification_nodes', 3)
         if verification < sampling:
             raise ConfigurationError('verification_nodes: sampling_nodes 이상이어야 합니다')
         curvature = Curvature(**tolerances,
-                              max_iterations=integer(data.get('max_iterations', 3), 'max_iterations', 0, 10),
+                              max_iterations=integer(data.get('max_iterations', 3), 'max_iterations', 0),
                               sampling_nodes=sampling, verification_nodes=verification)
     return target, Sizing(wave, fraction, floor, settings, curvature)

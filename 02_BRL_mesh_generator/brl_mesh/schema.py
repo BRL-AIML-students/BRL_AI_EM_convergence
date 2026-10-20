@@ -24,9 +24,10 @@ def number(value, name, *, positive=False):
     return result
 
 
-def integer(value, name, low=1, high=1_000_000):
-    if type(value) is not int or not low <= value <= high:
-        raise ConfigurationError(f'{name}: {low}–{high} 정수가 필요합니다')
+def integer(value, name, low=1, high=None):
+    if type(value) is not int or value < low or (high is not None and value > high):
+        bounds = f'{low} 이상' if high is None else f'{low}–{high}'
+        raise ConfigurationError(f'{name}: {bounds} 정수가 필요합니다')
     return value
 
 

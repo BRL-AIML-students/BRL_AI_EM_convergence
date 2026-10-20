@@ -6,6 +6,7 @@ DiscretizationError's list-view output does not expose those contracts.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
+import hashlib
 import math
 
 import gmsh
@@ -13,7 +14,20 @@ import numpy as np
 
 from .errors import MeshBlocked
 from .model import assert_current
-from .resources import checkpoint
+
+
+def _measurement_key(mesh):
+    from .cad import fingerprint
+    digest = hashlib.sha256()
+    for value in (mesh.node_ids, mesh.coordinates, mesh.element_ids, mesh.connectivity, mesh.surface_tags):
+        digest.update(value.tobytes())
+    for tag in sorted(tag for _, tag in gmsh.model.getEntities(1)):
+        kinds, ids, connectivity = gmsh.model.mesh.getElements(1, tag)
+        for kind, elements, nodes in zip(kinds, ids, connectivity):
+            digest.update(np.asarray([tag, kind], dtype=np.int64).tobytes())
+            digest.update(elements.tobytes())
+            digest.update(nodes.tobytes())
+    return fingerprint(), digest.digest()
 
 
 def initial_size(curvature, tolerance, dimension, cap):
@@ -75,9 +89,7 @@ def project(dimension, tag, points, *, trimmed=True):
                 raise MeshBlocked('projection_trim_incomplete: trim 분류 개수가 유효하지 않습니다')
             if count != len(points):
                 mask = []
-                for index, point in enumerate(parameters):
-                    if index % 256 == 0:
-                        checkpoint()
+                for point in parameters:
                     inside = gmsh.model.isInside(2, tag, point, parametric=True)
                     if inside not in (0, 1):
                         raise MeshBlocked('projection_trim_incomplete: trim 점 분류 실패')
@@ -94,7 +106,6 @@ def project(dimension, tag, points, *, trimmed=True):
                 for edge in curves:
                     if gmsh.model.occ.getMass(1, edge) <= 0:
                         continue
-                    checkpoint(samples=len(outside))
                     candidates, _ = project(1, edge, points[outside])
                     distances = np.linalg.norm(candidates-points[outside], axis=1)
                     use = distances < best
@@ -143,9 +154,9 @@ class CurvaturePlan:
         self.floor = sizing.minimum_size
         self.tolerances, self.scales, self.requests = {}, {}, {}
         self.failure = None
-        self.calls = 0
         self.iterations = 0
         self.history = []
+        self.verified = None
         self.faces = {tag for _, tag in gmsh.model.getEntities(2)}
         self.curves = {abs(tag) for face in self.faces for dim, tag in
                        gmsh.model.getBoundary([(2, face)], combined=False, oriented=False) if dim == 1}
@@ -201,7 +212,11 @@ class CurvaturePlan:
             k = abs(_array(gmsh.model.getCurvature(dim, tag, parameters.ravel()), 1, 1, 'curve curvature')[0, 0])
         k = float(k)
         required = initial_size(k, self.tolerances[dim, tag], dim, self.cap)
-        applied = required*self.scales[dim, tag]
+        # The finite absolute-resolution branch at a pole is not multiplied
+        # towards zero. Refine the curvature estimate above that resolution.
+        delta = min(required, self.tolerances[dim, tag])
+        scale = self.scales[dim, tag]
+        applied = required if scale == 1. else delta + (required-delta)*scale
         old = self.requests.get((dim, tag), CurvatureRequest(self.cap, self.cap, 0))
         divisions = (circle_divisions(1/k, self.tolerances[dim, tag])
                      if dim == 1 and required < self.cap and k > 1/np.finfo(float).max
@@ -232,9 +247,6 @@ class CurvaturePlan:
             if self.failure is not None:
                 return self.cap
             try:
-                self.calls += 1
-                if self.calls % 128 == 1:
-                    checkpoint()
                 return min(lc, self.target(dim, tag, (x, y, z)))
             except Exception as exc:
                 self.failure = exc
@@ -277,32 +289,28 @@ class CurvaturePlan:
                 batch = xyz[start:start+128]
                 samples = (np.einsum('ij,ejk->eik', weights, batch) if dim == 2 else
                            batch[:, :1]+line_weights[None, :, None]*(batch[:, 1:]-batch[:, :1]))
-                checkpoint(samples=samples.shape[0]*samples.shape[1])
                 projected, _ = project(dim, tag, samples.reshape(-1, 3))
                 distances = np.linalg.norm(projected-samples.reshape(-1, 3), axis=1).reshape(samples.shape[:2])
                 maxima = distances.max(axis=1)
                 entity_max = max(entity_max, float(maxima.max()))
                 result.extend((dim, tag, int(e), float(v)) for e, v in zip(ids[start:start+128], maxima))
             ratios.append(((dim, tag), entity_max/self.tolerances[dim, tag]))
-        checkpoint(mesh=True)
-        return Deviation(tuple(result), tuple(ratios))
+        deviation = Deviation(tuple(result), tuple(ratios))
+        if n == self.settings.verification_nodes:
+            self.verified = (_measurement_key(mesh), deviation.ratio)
+        return deviation
 
     def refine(self, deviation):
         if self.iterations >= self.settings.max_iterations:
             raise MeshBlocked(f'curvature_iteration_limit: sampled deviation ratio={deviation.ratio:g}, '
                               f'재생성 {self.iterations}/{self.settings.max_iterations}')
-        changes = {}
         for key, ratio in deviation.entity_ratios:
             if ratio > 1+1e-10:
-                factor = min(.8, .8/math.sqrt(ratio))
-                changes[key] = min(changes.get(key, 1), factor)
-                if key[0] == 2:
-                    for curve, faces in self.curve_faces.items():
-                        if key[1] in faces and (1, curve) in self.scales:
-                            changes[1, curve] = min(changes.get((1, curve), 1), factor)
-        for key, factor in changes.items():
-            self.scales[key] *= factor
+                self.scales[key] *= min(.7, .7/math.sqrt(ratio))
         self.iterations += 1
 
     def deviation_ratio(self, mesh):
+        assert_current(mesh)
+        if self.verified is not None and self.verified[0] == _measurement_key(mesh):
+            return self.verified[1]
         return self.measure(mesh).ratio

@@ -185,14 +185,6 @@ def test_minimum_floor_conflicts_block_before_meshing(tmp_path,monkeypatch,kind)
     assert not config.output_dir.exists()
 
 
-@pytest.mark.parametrize('limit,value,pattern',[('max_sampling',64,'sampling_incomplete'),
-    ('max_pair_tests',1,'feature_measurement_incomplete'),('max_features',1,'feature_measurement_incomplete')])
-def test_measurement_limits_do_not_silently_relax_requests(tmp_path,limit,value,pattern):
-    config=cad(tmp_path,'widths',{'target_size':1,'local':{'widths':{'enabled':True},limit:value}})
-    with pytest.raises(MeshBlocked,match=pattern):
-        with mesh_model(config):pass
-
-
 @pytest.mark.parametrize('mutation',['parameter','option','addition','removal',
                                      'distance_list','restriction_list','restriction_embedded'])
 def test_native_field_changes_require_regeneration(tmp_path,mutation):
@@ -275,8 +267,8 @@ def test_actual_cli_local_fields_and_floor_conflict_use_minimal_status(tmp_path)
     assert len(list(config.output_dir.rglob('mesh.nas')))==1
 
 
-def test_connected_cad_surfaces_do_not_consume_gap_pair_budget(tmp_path):
-    config=cad(tmp_path,'cylinder',{'target_size':1,'local':{'gaps':{'enabled':True},'max_pair_tests':1}})
+def test_connected_cad_surfaces_are_not_gap_pairs(tmp_path):
+    config=cad(tmp_path,'cylinder',{'target_size':1,'local':{'gaps':{'enabled':True}}})
     with mesh_model(config) as scene:
         assert not scene.sizing.features
 
@@ -344,13 +336,6 @@ def test_native_background_setter_consumes_min_of_all_feature_fields(tmp_path,mo
         assert root.kind=='Min'
         leaves=set(map(int,gmsh.model.mesh.field.getNumbers(root.tag,'FieldsList')))
         assert {binding.kind for binding in scene.sizing.fields if binding.tag in leaves}=={'MathEval','Box','Threshold'}
-
-
-def test_width_budget_blocks_before_dense_geometry_algebra(tmp_path,monkeypatch):
-    config=plate(tmp_path,{'target_size':1,'local':{'widths':{'enabled':True},'max_pair_tests':1}})
-    monkeypatch.setattr(np.linalg,'svd',lambda *a,**k:pytest.fail('measurement budget must precede dense allocation'))
-    with pytest.raises(MeshBlocked,match='feature_measurement_incomplete'):
-        with mesh_model(config):pass
 
 
 def test_field_api_failure_does_not_fallback_or_damage_previous_output(tmp_path,monkeypatch):
