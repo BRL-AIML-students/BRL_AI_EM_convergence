@@ -44,6 +44,34 @@ class Ogive:
 
 
 @dataclass(frozen=True)
+class Sphere:
+    radius: float
+    origin: tuple[float, float, float] = (0, 0, 0)
+
+
+@dataclass(frozen=True)
+class Cube:
+    side: float
+    origin: tuple[float, float, float] = (0, 0, 0)
+
+
+@dataclass(frozen=True)
+class Cylinder:
+    radius: float
+    height: float
+    origin: tuple[float, float, float] = (0, 0, 0)
+
+
+@dataclass(frozen=True)
+class Dihedral:
+    length: float
+    width1: float
+    width2: float
+    angle_deg: float = 90
+    origin: tuple[float, float, float] = (0, 0, 0)
+
+
+@dataclass(frozen=True)
 class CadFile:
     path: Path
     sheet_normal: int | None = None
@@ -64,7 +92,7 @@ class Improvement:
 
 @dataclass(frozen=True)
 class Configuration:
-    geometry: Plate | Ogive | CadFile
+    geometry: Plate | Ogive | Sphere | Cube | Cylinder | Dihedral | CadFile
     length_unit: str
     output_unit: str
     target_size: float | None
@@ -85,6 +113,10 @@ class Configuration:
         elif isinstance(geometry, Ogive):
             value = {'kind': 'ogive', 'diameter': geometry.diameter, 'length': geometry.length,
                      'thickness': geometry.thickness, 'origin': list(geometry.origin)}
+        elif isinstance(geometry, (Sphere, Cube, Cylinder, Dihedral)):
+            from dataclasses import asdict
+            value = {'kind': type(geometry).__name__.lower(), **asdict(geometry)}
+            value['origin'] = list(geometry.origin)
         else:
             value = {'kind': 'cad', 'path': str(geometry.path)}
             if geometry.sheet_normal is not None:
@@ -131,6 +163,9 @@ class Configuration:
         elif isinstance(geometry, Ogive):
             from .ogive import parameters
             parameters(geometry, config.unit_scale)
+        elif isinstance(geometry, (Sphere, Cube, Cylinder, Dihedral)):
+            from .primitives import parameters
+            parameters(geometry, config.unit_scale)
         return config
 
     @classmethod
@@ -162,7 +197,7 @@ def _origin(value):
     return tuple(_number(x, 'geometry.origin') for x in origin)
 
 
-def _geometry(value: object, base: Path) -> Plate | Ogive | CadFile:
+def _geometry(value: object, base: Path) -> Plate | Ogive | Sphere | Cube | Cylinder | Dihedral | CadFile:
     if not isinstance(value, dict):
         raise ConfigurationError('geometry: object가 필요합니다')
     if value.get('kind') == 'plate':
@@ -179,8 +214,24 @@ def _geometry(value: object, base: Path) -> Plate | Ogive | CadFile:
         if length <= diameter/2 or not 0 <= thickness < diameter/2:
             raise ConfigurationError('ogive: L > D/2 및 0 <= t < D/2가 필요합니다')
         return Ogive(diameter, length, thickness, _origin(geometry))
+    native = {'sphere': (Sphere, ('radius',)), 'cube': (Cube, ('side',)),
+              'cylinder': (Cylinder, ('radius', 'height')),
+              'dihedral': (Dihedral, ('length', 'width1', 'width2'))}
+    if isinstance(value.get('kind'), str) and value['kind'] in native:
+        shape, dimensions = native[value['kind']]
+        allowed = {'kind', 'origin', *dimensions}
+        if shape is Dihedral:
+            allowed.add('angle_deg')
+        geometry = _object(value, allowed, {'kind', *dimensions}, 'geometry')
+        sizes = {key: _number(geometry[key], 'geometry.'+key, positive=True) for key in dimensions}
+        if shape is Dihedral:
+            angle = _number(geometry.get('angle_deg', 90), 'geometry.angle_deg')
+            if not 0 < angle < 180:
+                raise ConfigurationError('dihedral: 0 < angle_deg < 180이 필요합니다')
+            sizes['angle_deg'] = angle
+        return shape(**sizes, origin=_origin(geometry))
     if value.get('kind') != 'cad':
-        raise ConfigurationError('geometry.kind: plate, ogive 또는 cad를 사용하세요')
+        raise ConfigurationError('geometry.kind: plate, ogive, sphere, cube, cylinder, dihedral 또는 cad를 사용하세요')
     geometry = _object(value, {'kind', 'path', 'sheet_normal', 'sheet_normals', 'separated_surfaces', 'protected_gap'},
                        {'kind', 'path'}, 'geometry')
     path = geometry['path']

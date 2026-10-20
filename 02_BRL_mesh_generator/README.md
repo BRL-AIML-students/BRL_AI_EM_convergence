@@ -20,7 +20,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Dev
 
 ONELAB의 `BRL/00 Action`에서 `Generate + publish NAS`를 선택하고 `BRL/01 Status`와 `BRL/02 NAS path`를 확인합니다. `Generate mesh`는 검사·필요한 개선까지 수행하지만 NAS는 쓰지 않습니다. `Publish current mesh`는 현재 메쉬를 재검사하고 발행합니다. 일반 Gmsh File/Export는 BRL 발행 검사를 호출하지 않습니다.
 
-정상 결과는 `outputs/run_<id>/mesh.nas` 한 파일입니다. CLI는 정상 0·입력/실행 오류 1·검사 차단 2를 반환합니다. Native plate·ogive D/L/t와 STEP/IGES/BREP를 지원하며 세부 단위·지원 범위·기본값은 guide에서 확인하세요.
+정상 결과는 `outputs/run_<id>/mesh.nas` 한 파일입니다. CLI는 정상 0·입력/실행 오류 1·검사 차단 2를 반환합니다. Native plate·ogive·sphere·cube·cylinder·dihedral과 STEP/IGES/BREP를 지원합니다. 형상 정의·파라미터별 그림·단위·기본값은 guide의 4장을 확인하세요. 새 입력 예제는 `examples/sphere.json`, `cube.json`, `cylinder_native.json`, `dihedral.json`이며 기존 `cylinder.json`은 CAD import 예제입니다.
 
 ## 개발과 관리
 
@@ -31,4 +31,4 @@ New-Item -ItemType Directory -Force .cache\tests | Out-Null
 
 의존성은 `uv.lock`으로 고정합니다. 환경과 `.git`를 임의 이동하지 말고 guide의 폴더 설명을 참고하세요. 현재 `.cache/github-delivery`는 별도 Git checkout이므로 단순 캐시처럼 전체 삭제하지 않습니다.
 
-GitHub 대상은 [BRL_AI_EM_convergence](https://github.com/BRL-AIML-students/BRL_AI_EM_convergence), 저장소 안의 모듈 경로는 `02_BRL_mesh_generator/`입니다. Merge와 작업 branch 삭제는 기본적으로 사용자가 직접 진행하며, Codex는 명시적으로 요청받은 작업만 수행합니다. 2026-10-20 사용자 요청에 따라 이번 guide 변경은 별도 PR과 merge까지 진행하고 branch는 보존합니다.
+GitHub 대상은 [BRL_AI_EM_convergence](https://github.com/BRL-AIML-students/BRL_AI_EM_convergence), 저장소 안의 모듈 경로는 `02_BRL_mesh_generator/`입니다. Codex는 명시적으로 요청받은 범위에서 merge하며, merge까지 요청받으면 병합 후 해당 작업 branch를 삭제합니다.

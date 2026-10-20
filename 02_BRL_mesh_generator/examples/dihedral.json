@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "dihedral", "length": 2, "width1": 2, "width2": 2, "angle_deg": 90, "origin": [0, 0, 0]},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {"target_size": 0.4},
+  "output_dir": "../outputs"
+}
