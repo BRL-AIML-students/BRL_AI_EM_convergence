@@ -16,7 +16,7 @@
 ## GitHub와 작업 권한
 
 - 사용자 지정 저장소는 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`, 새 모듈 경로는 `02_BRL_mesh_generator/`다. 이후 수정·PR은 이 저장소를 사용한다.
-- Merge와 작업 branch 삭제는 기본적으로 사용자가 직접 한다. 다만 2026-10-20 사용자가 guide의 PR·merge까지 명시적으로 요청했으므로 이번 문서 PR은 Codex가 merge commit으로 병합한다. Branch 삭제는 요청하지 않았으므로 수행하지 않는다.
+- Merge는 명시적으로 요청받은 범위에서 수행한다. 사용자가 merge까지 요청하면 merge commit으로 병합한 뒤 해당 PR의 원격 작업 branch와 대응하는 로컬 작업 branch를 삭제한다. main과 무관한 branch는 삭제하지 않는다. 2026-10-20 사용자가 이 규칙과 UI 수정·native 형상 확장의 일괄 merge를 명시했다.
 - 로컬에서 변경·검증한 뒤 요청된 PR을 작성/갱신한다. 문서 설명·로컬 저장 요청만으로 원격 게시를 자동 실행하지 않는다.
 - 독립 source 이력과 게시 이력은 parent/SHA가 다르다. Source branch를 원격에 강제 push하지 않는다. 상세 경로·PR 기록은 `docs/validation-ko.md`의 GitHub 절을 먼저 확인한다.
 - `.cache/github-delivery`는 별도 Git checkout이다. 이 경로를 포함한 cache 전체를 무심코 삭제하거나 .git/가상환경을 이동하지 않는다. 이번 guide 작업은 구조 이동을 포함하지 않는다.

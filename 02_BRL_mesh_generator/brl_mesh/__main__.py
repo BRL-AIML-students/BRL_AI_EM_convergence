@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(encoding='utf-8')
-    parser = argparse.ArgumentParser(description='BRL 표면 메쉬 생성기 — plate·ogive·STEP/IGES/BREP')
+    parser = argparse.ArgumentParser(description='BRL 표면 메쉬 생성기 — plate·ogive·sphere·cube·cylinder·dihedral·STEP/IGES/BREP')
     parser.add_argument('configuration', help='schema_version=1 JSON 설정 경로')
     args = parser.parse_args(argv)
     # OCC emits native import notices even when General.Terminal is zero.

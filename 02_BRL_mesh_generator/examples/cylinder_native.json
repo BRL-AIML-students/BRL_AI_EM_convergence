@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "cylinder", "radius": 1, "height": 2, "origin": [0, 0, 0]},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {"target_size": 0.4, "curvature": {"absolute_tolerance": 0.02}},
+  "output_dir": "../outputs"
+}

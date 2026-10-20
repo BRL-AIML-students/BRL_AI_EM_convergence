@@ -180,6 +180,46 @@ def test_window_close_during_wait_does_not_reopen_or_dispatch(config, monkeypatc
     assert not gmsh.isInitialized()
 
 
+@pytest.mark.parametrize('change', ['idle', 'geometry', 'invalid_control', 'invalid_action', 'publish'])
+def test_idle_loop_preserves_widgets_after_one_change(config, monkeypatch, change):
+    """Unchanged inputs must not rebuild widgets or rewrite ONELAB parameters."""
+    cycles, updates, writes = 0, [], []
+    set_string, set_number = gmsh.onelab.setString, gmsh.onelab.setNumber
+    monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: None)
+    monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda _: None)
+    monkeypatch.setattr(gmsh.fltk, 'isAvailable', lambda: True)
+    def write_string(name, value):
+        writes.append((cycles, name))
+        set_string(name, value)
+    def write_number(name, value):
+        writes.append((cycles, name))
+        set_number(name, value)
+    monkeypatch.setattr(gmsh.onelab, 'setString', write_string)
+    monkeypatch.setattr(gmsh.onelab, 'setNumber', write_number)
+    def wait(_):
+        nonlocal cycles
+        cycles += 1
+        if cycles == 2:
+            if change == 'geometry':
+                set_string(ui.KIND, ['ogive'])
+            elif change == 'invalid_control':
+                set_number(ui.CAP_ENABLED, [2])
+            elif change == 'invalid_action':
+                set_string(ui.ACTION, ['unknown action'])
+            elif change == 'publish':
+                set_string(ui.ACTION, [ui.ACTIONS[1]])
+        elif cycles == 6:
+            set_string(ui.ACTION, [ui.ACTIONS[5]])
+    monkeypatch.setattr(gmsh.fltk, 'wait', wait)
+    monkeypatch.setattr(gmsh.fltk, 'update', lambda: updates.append(cycles))
+    ui.launch(config, config.output_dir.parent)
+    assert updates == ([] if change == 'idle' else [2])
+    assert all(cycle in (2, 6) for cycle, _ in writes)
+    files = list(config.output_dir.rglob('mesh.nas'))
+    assert len(files) == (1 if change == 'publish' else 0)
+    assert not gmsh.isInitialized()
+
+
 def test_geometry_controls_show_only_applied_inputs(controller):
     assert not json.loads(gmsh.onelab.get(ui.CAD_PATH))['visible']
     assert not json.loads(gmsh.onelab.get(ui.SHEET_SIGN))['visible']

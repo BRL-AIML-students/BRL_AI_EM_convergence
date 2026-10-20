@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "geometry": {"kind": "cube", "side": 2, "origin": [0, 0, 0]},
+  "length_unit": "mm",
+  "output_unit": "mm",
+  "mesh": {"target_size": 0.4},
+  "output_dir": "../outputs"
+}

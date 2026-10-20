@@ -8,9 +8,28 @@
 - Gmsh DLL SHA256: `6cac3eefb477265d9fa60bbd869dbbbf7c7ca4cb308c0f8f2b43e91d43de3c1c`. 이 build의 식별값이며 다른 build의 동일 결과 보증이 아니다.
 - 문서 정리 전 source commit: `0e1f4daf2d5f5cf4253671499e517b83d4d1870f`.
 - 문서 정리 전 게시 head: `bcf7ad0460d07c7dd01db297fe86136c7923b277`, tree `9964f2ab9ad2f78eb3965ec9d5a3594325968bd8`.
-- 이번 작업은 guide·README·개발 지침의 정리다. `brl_mesh/`, `examples/`, `tests/`, `tools/`, launcher·setup·의존성 파일은 변경하지 않는다. 아래 수치 시험은 기존 실행의 기록이며 문서 작업 중 새로 수행했다고 표시하지 않는다.
+- 앞선 문서 정리 작업은 guide·README·개발 지침만 변경했다. 아래 통합 수치 시험은 당시 기존 실행의 기록이며 문서 작업 중 새로 수행한 결과가 아니다.
+
+## 2026-10-20 native UI 깜빡임 수정
+
+- 대상: `brl_mesh/native_ui.py`, `tests/test_native_ui.py`, guide의 Idle 설명. Launcher·생성 알고리즘·검사/발행 기준은 변경하지 않았다.
+- 원인: `wait(.2)` 다음에 매번 `fltk.update()`를 호출했다. Gmsh 4.15.2 source에서 이 API는 `updateViews(true, true)` → `onelabGroup::rebuildTree(true)`로 연결되며 트리/입력 위젯을 재구성한다. Idle도 Action 값을 다시 썼다.
+- 수정: Idle Action은 쓰기 없이 반환한다. 표시 조건·상태·Action 소비에 따른 변경을 모아 해당 cycle에서만 UI를 갱신한다. 같은 상태/경로/적용 크기는 다시 쓰지 않는다. `wait(.2)`의 이벤트 처리, 현재 CAD/field/mesh 무효화 검사, 닫힌 창 보호는 유지한다.
+- 새 검증: 고정 `.venv`에서 `tests/test_native_ui.py` **23 passed in 2.89s**. Idle, 표시 조건 전환, 지속되는 잘못된 설정, 잘못된 Action, NAS 발행 뒤 대기에서 불필요한 갱신/값 쓰기가 없음을 확인했다. 기존 변경 무효화·CLI/NAS 일치·오류 소비·창 종료 시험도 통과했다.
+- 실제 FLTK 검증: 10 event-loop cycle 중 cycle 4에 geometry를 바꾼 경우에만 `update()` 1회, 나머지 Idle에서는 0회, Close 후 finalize를 확인했다. `tools.native_ui_smoke`도 5 cycle에서 NAS 1개 발행·종료를 통과했다. 실제 창/API 경로 검증이며 마우스 입력·깜빡임의 시각적 전후 비교는 수행하지 않았다. 전체 300개 시험을 이번 수정에서 다시 실행한 것은 아니다.
 
 ## 통합 검증 증거
+
+### 2026-10-20 native 형상 확장과 UI 수정
+
+- Native `sphere(radius)`, `cube(side)`, `cylinder(radius,height)`, `dihedral(length,width1,width2,angle_deg)`를 strict JSON·CLI·ONELAB에 연결했다. 치수/origin 단위 변환·좌표 정밀도·잘못된 입력 거부와 변경 시 재생성 요구를 유지한다.
+- Sphere는 origin=중심, cube는 최소 모서리, cylinder는 바닥 중심/+Z 축이다. 세 형상은 CAD solid이며 표면 삼각형만 발행한다. Dihedral은 +Z 공통 모서리를 같은 CAD edge로 구성한 두 sheet이며 0<angle_deg<180이다. 첫 판 +Y, 둘째 판 (sin θ,−cos θ,0)을 기준으로 한다.
+- 고정 source `.venv`에서 전체 **341 passed in 302.95s**. 새 시험은 단위·origin·bbox·해석적 면적/체적·JSON/UI roundtrip·필드 visibility·치수 변경 무효화·strict 실패·NAS 독립 읽기·좌표/ID/connectivity/PID를 포함한 NAS bytes 반복 일치를 확인했다. Dihedral 45°/90°/135°에서 실제 공통 hinge node와 두 판의 winding·topology·검사를 확인했다.
+- 실제 FLTK에서 네 새 예제를 각각 `tools.native_ui_smoke`로 실행해 각 5 cycle·NAS 1개·finalize를 확인했다. 전체 CLI worker 경로도 네 예제 모두 exit 0 / status=ok로 발행했다. 테스트 결과는 `.cache/` 아래에만 두며 원격 게시에 포함하지 않는다.
+- Guide: 기존 형상을 포함한 7개 형상 정의·파라미터 표·inline SVG 그림, dihedral MathML 좌표 정의를 추가했다. 총 17 section·24 table·6 MathML·7 SVG. HTML 중첩·목차/로컬 링크·중복 ID·외부 자산 없음·SVG/XML 구조를 확인했다. Headless Edge에서 1440 px/390 px 페이지 가로 넘침·JS 오류·SVG 문자 범위 이탈 없음, 모바일 그림 자체 스크롤, 인쇄 시 그림 폭과 수식 표시를 확인했다. 7개 그림과 모바일 화면을 시각 검토했다.
+- 이번 일괄 게시 기준은 문서 PR #18 merge `070a534cc3dd924b90eeb9e102b3edce0c1a4737`이다. 독립 source 이력을 강제 push하지 않고 전달 checkout의 최신 main에서 `codex/native-shapes-ui`로 게시한다. UI 깜빡임 수정도 함께 포함하며 사용자 요청대로 merge 후 해당 PR 작업 branch를 삭제한다.
+
+### 기존 재작성 통합 기록
 
 대상 저장소의 새 모듈 배치에서 **300 passed in 316.63s**를 확인했다. source의 고정 `.venv`를 사용해 전달 checkout의 모듈 폴더에서 전체 시험을 실행했다. 첫 실행은 pytest basetemp 상위 폴더가 없어 실패했으며, 폴더 준비 후 전체를 다시 실행해 통과했다.
 
@@ -114,7 +133,7 @@ Gmsh 4.15.2에서 기준 edge (0,0)→(1,0), 세 번째 점 (x,h)의 104개 1차
 - 사용자 지정 저장소: https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git
 - 새 모듈의 저장소 경로: `02_BRL_mesh_generator/`.
 - 기존 구현 교체 PR: https://github.com/BRL-AIML-students/BRL_AI_EM_convergence/pull/17 . 2026-10-20 조회에서 merge 완료를 확인했다. Merge commit은 `11e5320d504c1eb7a56fda87a14937565a09c06d`이며 새 문서 PR의 기준 main이다.
-- Merge와 작업 branch 삭제는 기본적으로 사용자가 직접 진행한다. 2026-10-20 사용자가 guide의 PR·merge까지 명시적으로 요청했으므로 이번 문서 변경은 최신 main에서 별도 PR을 만든 뒤 merge commit으로 병합한다. Branch 삭제는 수행하지 않는다. 폴더 통합 설명은 참고 자료이며 실제 .git·환경 폴더 이동을 승인한 것으로 해석하지 않는다.
+- Merge는 명시적으로 요청받은 범위에서 수행한다. 2026-10-20 사용자가 merge까지 요청하면 병합 후 해당 PR의 원격 작업 branch와 대응 로컬 작업 branch를 삭제하도록 지시했다. main과 무관한 기존 branch는 삭제하지 않는다. 이전 guide PR에서 branch를 보존했던 지시는 이 후속 지시로 대체한다. 폴더 통합 설명은 실제 .git·환경 폴더 이동을 승인한 것으로 해석하지 않는다.
 - 독립 source: `C:\Users\user1\Documents\Codex\02_BRL_mesh_generator`, 로컬 `codex/rebuild-core`. 원격 게시 이력과 parent/SHA가 달라 그대로 강제 push하지 않는다.
 - 전달 checkout: `C:\Users\user1\Documents\Codex\02_BRL_mesh_generator\.cache\github-delivery`; 로컬 `codex/rebuild-published`가 원격 `codex/rebuild-core`를 추적했다. 로컬 별도 `codex/rebuild-core`는 subtree 통합 이력이며 혼동하지 않는다.
 - PR #17은 CLI credential manager 대기로 연결된 GitHub API를 사용해 9개 commit으로 게시했다. 메시지와 단계 내용을 유지했고 각 원격 commit 본문에 원본 source SHA를 남겼다. 대응표는 전달 checkout의 `.cache/publish/commit-map.json`에 있다.

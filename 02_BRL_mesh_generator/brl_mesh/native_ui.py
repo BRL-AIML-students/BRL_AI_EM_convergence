@@ -10,7 +10,7 @@ import threading
 
 import gmsh
 
-from .config import CadFile, Configuration, Plate, Ogive
+from .config import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder, Dihedral
 from .engine import Scene, generate, publish
 from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
@@ -30,6 +30,22 @@ DIAMETER = PREFIX + '15 Ogive diameter D'
 OGIVE_LENGTH = PREFIX + '16 Ogive length L'
 THICKNESS = PREFIX + '17 Ogive thickness t'
 ORIGIN = [PREFIX + f'14 Origin {axis}' for axis in 'XYZ']
+SPHERE_RADIUS = PREFIX + 'Geometry/Sphere radius'
+CUBE_SIDE = PREFIX + 'Geometry/Cube side'
+CYLINDER_RADIUS = PREFIX + 'Geometry/Cylinder radius'
+CYLINDER_HEIGHT = PREFIX + 'Geometry/Cylinder height'
+DIHEDRAL_LENGTH = PREFIX + 'Geometry/Dihedral length'
+DIHEDRAL_WIDTH1 = PREFIX + 'Geometry/Dihedral width 1'
+DIHEDRAL_WIDTH2 = PREFIX + 'Geometry/Dihedral width 2'
+DIHEDRAL_ANGLE = PREFIX + 'Geometry/Dihedral angle deg'
+NATIVE_SHAPES = {
+    'sphere': (Sphere, Sphere(1), {'radius': SPHERE_RADIUS}),
+    'cube': (Cube, Cube(2), {'side': CUBE_SIDE}),
+    'cylinder': (Cylinder, Cylinder(1, 2), {'radius': CYLINDER_RADIUS, 'height': CYLINDER_HEIGHT}),
+    'dihedral': (Dihedral, Dihedral(2, 2, 2), {'length': DIHEDRAL_LENGTH,
+                  'width1': DIHEDRAL_WIDTH1, 'width2': DIHEDRAL_WIDTH2, 'angle_deg': DIHEDRAL_ANGLE}),
+}
+GEOMETRY_CHOICES = ['plate', 'ogive', *NATIVE_SHAPES, 'cad']
 INPUT_UNIT = PREFIX + '20 Length unit (native and BREP)'
 OUTPUT_UNIT = PREFIX + '21 Output unit'
 TARGET = PREFIX + '22 Target size (output unit)'
@@ -94,12 +110,15 @@ def install_controls(config: Configuration) -> None:
         _parameter(ACTION, ACTIONS[0], choices=list(ACTIONS.values())),
         _parameter(STATUS, 'Ready: choose an Action', readOnly=True),
         _parameter(NAS_PATH, '', readOnly=True),
-        _parameter(KIND, 'plate' if is_plate else ('cad' if cad else 'ogive'), choices=['plate', 'ogive', 'cad']),
+        _parameter(KIND, config.to_dict()['geometry']['kind'], choices=GEOMETRY_CHOICES),
         _parameter(CAD_PATH, cad.path.as_posix() if cad else '', kind='file'),
         _parameter(LENGTH, plate.length, min=0), _parameter(WIDTH, plate.width, min=0),
         *[_parameter(name, value) for name, value in zip(ORIGIN, origin)],
         _parameter(DIAMETER, ogive.diameter, min=0), _parameter(OGIVE_LENGTH, ogive.length, min=0),
         _parameter(THICKNESS, ogive.thickness, min=0),
+        *[_parameter(control, getattr(config.geometry if isinstance(config.geometry, shape) else default, key),
+                     **({'min': 0, 'max': 180} if key == 'angle_deg' else {'min': 0}))
+          for shape, default, controls in NATIVE_SHAPES.values() for key, control in controls.items()],
         _parameter(INPUT_UNIT, config.length_unit, choices=['m', 'cm', 'mm', 'um']),
         _parameter(OUTPUT_UNIT, config.output_unit, choices=['m', 'cm', 'mm', 'um']),
         _parameter(TARGET, config.target_size if config.target_size is not None else 1, min=0),
@@ -154,12 +173,14 @@ def visibility_signature():
 
 
 def update_visibility() -> None:
-    is_plate = gmsh.onelab.getString(KIND) == ['plate']
-    is_ogive = gmsh.onelab.getString(KIND) == ['ogive']
-    visibility = {CAD_PATH: not is_plate and not is_ogive, SHEET_SIGN: not is_plate and not is_ogive,
+    kind = _string(KIND)
+    is_plate, is_ogive = kind == 'plate', kind == 'ogive'
+    visibility = {CAD_PATH: kind == 'cad', SHEET_SIGN: kind == 'cad',
                   **{name: is_plate for name in [LENGTH, WIDTH]},
-                  **{name: is_plate or is_ogive for name in ORIGIN},
+                  **{name: kind != 'cad' for name in ORIGIN},
                   **{name: is_ogive for name in [DIAMETER, OGIVE_LENGTH, THICKNESS]},
+                  **{name: kind == shape for shape, (_, _, controls) in NATIVE_SHAPES.items()
+                     for name in controls.values()},
                   TARGET: _flag(CAP_ENABLED), FLOOR: _flag(FLOOR_ENABLED),
                   **{name: _flag(WAVE_ENABLED) for name in [FREQUENCY, WAVE_DIV, EPSILON, MU]},
                   FALLBACK: not _flag(CAP_ENABLED) and not _flag(WAVE_ENABLED),
@@ -183,6 +204,8 @@ def update_visibility() -> None:
         elif name in (CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY):
             options.update(min=0 if name == CURV_ITERATIONS else 3,
                            max=10 if name == CURV_ITERATIONS else 100, step=1)
+        elif name == DIHEDRAL_ANGLE:
+            options.update(min=0, max=180)
         elif name != CAD_PATH and name not in ORIGIN:
             options['min'] = 0
         gmsh.onelab.set(json.dumps(_parameter(name, value, visible=visible, **options), ensure_ascii=False))
@@ -225,6 +248,9 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
     elif kind == 'ogive':
         geometry = {'kind': 'ogive', 'diameter': _number(DIAMETER), 'length': _number(OGIVE_LENGTH),
                     'thickness': _number(THICKNESS), 'origin': [_number(name) for name in ORIGIN]}
+    elif kind in NATIVE_SHAPES:
+        geometry = {'kind': kind, **{key: _number(name) for key, name in NATIVE_SHAPES[kind][2].items()},
+                    'origin': [_number(name) for name in ORIGIN]}
     elif kind == 'cad':
         geometry = value['geometry'] if isinstance(base.geometry, CadFile) else {'kind': 'cad'}
         geometry = geometry | {'path': _string(CAD_PATH)}
@@ -237,7 +263,7 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
         else:
             geometry['sheet_normal'] = sign
     else:
-        raise ConfigurationError('Geometry: plate, ogive 또는 cad가 필요합니다')
+        raise ConfigurationError('Geometry: ' + ', '.join(GEOMETRY_CHOICES) + ' 중 하나가 필요합니다')
     enabled = _integer(IMPROVE)
     if enabled not in (0, 1):
         raise ConfigurationError('Improve if needed: 0 또는 1이 필요합니다')
@@ -292,11 +318,17 @@ class Controller:
         self.close_requested = False
         install_controls(base)
         self.visible_state = visibility_signature()
+        self.ui_dirty = False
 
     def status(self, message: str, path: str = '') -> None:
-        gmsh.onelab.setString(STATUS, [message])
-        gmsh.onelab.setString(NAS_PATH, [path])
-        gmsh.onelab.setNumber(APPLIED_SIZE, [self.scene.sizing.global_size if self.scene is not None else 0])
+        for name, value in ((STATUS, message), (NAS_PATH, path)):
+            if gmsh.onelab.getString(name) != [value]:
+                gmsh.onelab.setString(name, [value])
+                self.ui_dirty = True
+        size = self.scene.sizing.global_size if self.scene is not None else 0
+        if list(gmsh.onelab.getNumber(APPLIED_SIZE)) != [size]:
+            gmsh.onelab.setNumber(APPLIED_SIZE, [size])
+            self.ui_dirty = True
 
     def invalidate_if_changed(self) -> None:
         try:
@@ -304,6 +336,7 @@ class Controller:
             if state != self.visible_state:
                 update_visibility()
                 self.visible_state = state
+                self.ui_dirty = True
             if self.scene is None:
                 return
             self.scene.require_current(read_controls(self.base, self.base_dir))
@@ -371,10 +404,14 @@ class Controller:
             if choice not in ACTIONS.values():
                 raise ConfigurationError('지원하지 않는 Action입니다')
             action = {label: code for code, label in ACTIONS.items()}[choice]
+            if action == 0:
+                return
             gmsh.onelab.setString(ACTION, [ACTIONS[0]])
+            self.ui_dirty = True
             self.perform(action)
         except Exception as exc:
             gmsh.onelab.setString(ACTION, [ACTIONS[0]])
+            self.ui_dirty = True
             self.status(f'Blocked: {exc}')
 
 
@@ -397,8 +434,10 @@ def launch(config: Configuration, base_dir: Path) -> None:
                 break
             controller.invalidate_if_changed()
             controller.dispatch()
-            if not controller.close_requested:
+            # update() rebuilds ONELAB widgets; wait() already pumps UI events.
+            if controller.ui_dirty and not controller.close_requested:
                 gmsh.fltk.update()
+                controller.ui_dirty = False
     finally:
         gmsh.finalize()
 

@@ -6,7 +6,7 @@ import hashlib
 
 import gmsh
 
-from .config import CadFile, Configuration, Plate, Ogive
+from .config import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder, Dihedral
 from .errors import ConfigurationError, MeshBlocked
 
 # Explicit OpenCASCADE output-unit identifiers, verified with each importer.
@@ -117,6 +117,9 @@ def build_geometry(config: Configuration) -> CadReference:
         signs = {face: 1}
     elif isinstance(geometry, Ogive):
         from .ogive import build
+        signs = build(geometry, config.unit_scale)
+    elif isinstance(geometry, (Sphere, Cube, Cylinder, Dihedral)):
+        from .primitives import build
         signs = build(geometry, config.unit_scale)
     else:
         import_cad(geometry, config)
