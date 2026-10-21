@@ -29,6 +29,35 @@ def action(controller, code):
     return gmsh.onelab.getString(ui.STATUS)[0]
 
 
+@pytest.mark.parametrize('wave', [None, 'custom'])
+def test_native_startup_enables_default_wave_preserves_custom_and_allows_disable(config, monkeypatch, wave):
+    from brl_mesh.sizing_config import Wave
+    requested = None if wave is None else Wave(2e9, 20, 4, 2)
+    configured = replace(config, sizing=replace(config.sizing, wave=requested))
+    captured = []
+    def controller(base, base_dir):
+        current = ui.Controller(base, base_dir)
+        captured.append(base)
+        expected = requested or Wave(1e9)
+        assert list(gmsh.onelab.getNumber(ui.WAVE_ENABLED)) == [1]
+        assert json.loads(gmsh.onelab.get(ui.FREQUENCY))['visible']
+        assert ui.read_controls(base, base_dir).sizing.wave == expected
+        gmsh.onelab.setNumber(ui.WAVE_ENABLED, [0])
+        current.invalidate_if_changed(deep=False)
+        assert ui.read_controls(base, base_dir).sizing.wave is None
+        assert not json.loads(gmsh.onelab.get(ui.FREQUENCY))['visible']
+        current.close_requested = True
+        return current
+    monkeypatch.setattr(ui, 'AsyncController', controller)
+    monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: None)
+    monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda _: None)
+    monkeypatch.setattr(gmsh.fltk, 'isAvailable', lambda: True)
+    ui.launch(configured, config.output_dir.parent)
+    assert len(captured) == 1
+    assert configured.sizing.wave == requested
+    assert not gmsh.isInitialized()
+
+
 def test_curvature_controls_roundtrip_and_invalidation(config):
     from brl_mesh.sizing_config import Curvature
     configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(.001, .002, 2, 7, 13)))

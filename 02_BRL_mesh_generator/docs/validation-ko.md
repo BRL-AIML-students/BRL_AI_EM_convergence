@@ -223,3 +223,9 @@ Gmsh 4.15.2에서 기준 edge (0,0)→(1,0), 세 번째 점 (x,h)의 104개 1차
 | 구 R=10 mm, h=0.5 mm, 12,100 triangles | 11.59 s (11.51–12.40) | 6.13 s (6.03–6.23) | 1.89배 | 765,109 bytes, 전후 동일 |
 
 두 조건의 각 6개 NAS는 node/triangle 수·바이트 수·SHA256가 모두 일치했다. 별도의 profiler 4조건(곡률 OFF 조밀 판·구, coarse 구, 상대 곡률 ON 구)에서도 전후 NAS가 모두 동일했다. 최종 상세 JSON은 `.cache/performance/summary.json`, 원본 wall-clock 결과는 `.cache/perf-original/.cache/performance/before-plain/results.json`과 `.cache/performance/after-plain/results.json`에 있다.
+
+## 2026-10-21 ONELAB wave 기본 활성화
+
+- 사용자 요청에 따라 native `launch`에서 wave가 생략된 시작 설정에 `Wave(1e9)`를 적용한다. 시작값은 1 GHz·파장당 요소 수 10·상대 유전율/투자율 각 1이다. 명시된 wave 설정은 보존하고 실행 중 체크 해제도 허용한다.
+- 기본값은 Controller에 전달할 설정에 먼저 반영해 worker 실행과 설정 변경 감지가 같은 조건을 사용한다. 원래 Configuration과 JSON 파일은 변경하지 않는다. CLI에서 wave 생략 시 OFF라는 schema 의미도 유지한다. Target size가 활성화되어 있으면 기존처럼 두 길이 중 작은 값을 사용한다.
+- `tests/test_native_ui.py`와 `tests/test_sizing_config.py` 70건 통과(3.16 s). 기본 ON·사용자 주파수/매질 보존·체크 해제·원 설정 불변·기존 idle/Action 동작을 확인했다. 실제 FLTK `tools.native_ui_smoke examples/plate.json`에서 비동기 생성·NAS 검증·발행·종료를 확인했다(30 event pumps, 최대 간격 0.296 s).
