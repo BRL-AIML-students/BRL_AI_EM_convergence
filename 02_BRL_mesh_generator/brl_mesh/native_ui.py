@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -503,6 +504,10 @@ def launch(config: Configuration, base_dir: Path) -> None:
         raise RuntimeError('ONELAB/FLTK는 main thread에서 실행해야 합니다')
     if gmsh.isInitialized():
         raise RuntimeError('기존 Gmsh session이 있습니다. 독립 프로세스에서 실행하세요')
+    # Native startup enables wavelength sizing; explicit frequency settings win.
+    # Materialize it in the base config so invalidation and workers agree.
+    if config.sizing.wave is None:
+        config = replace(config, sizing=replace(config.sizing, wave=Wave(1e9)))
     gmsh.initialize(readConfigFiles=False)
     controller = None
     try:
