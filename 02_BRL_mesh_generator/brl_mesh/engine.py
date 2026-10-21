@@ -64,10 +64,7 @@ def generate(config: Configuration) -> Scene:
     """Build in an owned, empty session; shared by the CLI and native UI."""
     if gmsh.model.getEntities():
         raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
-    configure_mesh(config)
-    reference = build_geometry(config)
-    sizing = apply_sizing(config)
-    curvature = CurvaturePlan(config, sizing) if config.sizing.curvature is not None else None
+    reference, sizing, curvature = prepare_geometry(config)
     for face, sign in reference.sheet_signs.items():
         gmsh.model.mesh.setReverse(2, face, sign < 0)
     while True:
@@ -85,6 +82,20 @@ def generate(config: Configuration) -> Scene:
         curvature.refine(deviation)
         del current, deviation  # Do not retain the previous arrays during regeneration.
         gmsh.model.mesh.clear()
+    return scene_from_current(config, reference, sizing, curvature)
+
+
+def prepare_geometry(config):
+    """Create CAD and fields without generating or inspecting triangles."""
+    configure_mesh(config)
+    reference = build_geometry(config)
+    sizing = apply_sizing(config)
+    curvature = CurvaturePlan(config, sizing) if config.sizing.curvature is not None else None
+    return reference, sizing, curvature
+
+
+def scene_from_current(config, reference, sizing, curvature):
+    """Bind current curve/point mesh to its independently built CAD reference."""
     fixed_boundary = boundary_state()
     def geometry_check(mesh):
         reference.require_current(config)

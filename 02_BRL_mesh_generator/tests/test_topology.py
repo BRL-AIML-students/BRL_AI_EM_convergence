@@ -70,3 +70,18 @@ def test_expected_components_and_boundary_are_checked(square):
 def test_invalid_audit_settings_are_incomplete(square, change):
     result = inspect_topology(square, replace(BoundaryIntent(exposed_edges(square), 1), **change))
     assert any(x.status == 'incomplete' for x in result.issues)
+
+
+def test_t_junction_across_point_batches_and_oblique_edges():
+    points, triangles = [], []
+    for i in range(800):
+        first = len(points)+1
+        points.extend([(3*i, 0, 0), (3*i+2, 0, 0), (3*i, 2, 0)])
+        triangles.append((first, first+1, first+2))
+    first = len(points)+1
+    points.extend([(1, 0, 0), (1, -1, 0), (2, -1, 0)])
+    triangles.append((first, first+1, first+2))
+    transform = np.array([[1., .2, .3], [.4, 1, .1], [.1, .3, 1]])
+    mesh = mesh_from(np.asarray(points) @ transform, triangles)
+    result = inspect_topology(mesh, BoundaryIntent(exposed_edges(mesh), 801))
+    assert codes(result) == {'t_junction'}

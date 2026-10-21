@@ -32,6 +32,30 @@ def _outward_sign(volume: int, point: np.ndarray, normal: np.ndarray, local_leng
     raise ValueError('CAD solid 양쪽의 안/밖을 구분하지 못했습니다')
 
 
+def _outward_signs(volume, points, normals, local_lengths):
+    """Certify uniform batches by counts; mixed batches retain per-point checks.
+
+    isInside returns a count, not a mask. Only all-inside/all-outside counts
+    establish every sign; never broadcast the sign of a representative point.
+    """
+    signs = np.empty(len(points))
+    for start in range(0, len(points), 1024):
+        p, n, h = points[start:start+1024], normals[start:start+1024], local_lengths[start:start+1024]
+        numeric = 64*np.finfo(float).eps*np.maximum(np.max(np.abs(p), axis=1), h)
+        steps = np.maximum(h*1e-5, numeric)
+        offsets = n*steps[:, None]
+        plus = gmsh.model.isInside(3, volume, (p+offsets).ravel())
+        minus = gmsh.model.isInside(3, volume, (p-offsets).ravel())
+        if plus == 0 and minus == len(p):
+            signs[start:start+len(p)] = 1
+        elif plus == len(p) and minus == 0:
+            signs[start:start+len(p)] = -1
+        else:
+            signs[start:start+len(p)] = [_outward_sign(volume, point, normal, float(length))
+                                       for point, normal, length in zip(p, n, h)]
+    return signs
+
+
 def inspect_normals(mesh: SurfaceMesh, sheet_signs: dict[int, int]) -> NormalValues:
     """sheet_signs chooses +1/-1 relative to CAD parametrization, not solid outward.
 
@@ -71,8 +95,7 @@ def inspect_normals(mesh: SurfaceMesh, sheet_signs: dict[int, int]) -> NormalVal
             local_lengths = np.sqrt(magnitude[indices])
             if owners[surface]:
                 volume = next(iter(owners[surface]))
-                signs = np.array([_outward_sign(volume, p, n, float(h))
-                                  for p, n, h in zip(points, reference, local_lengths)])
+                signs = _outward_signs(volume, points, reference, local_lengths)
             else:
                 signs = np.full(len(indices), sheet_signs[surface])
             cosine = signs * np.einsum('ij,ij->i', cross[indices], reference) / magnitude[indices]

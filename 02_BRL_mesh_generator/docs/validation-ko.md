@@ -188,3 +188,38 @@ Gmsh 4.15.2에서 기준 edge (0,0)→(1,0), 세 번째 점 (x,h)의 104개 1차
 - [Gmsh 4.15.2 manual](https://gmsh.info/doc/texinfo/gmsh.html): mesh size fields·CAD API·AnalyseMeshQuality·optimize·ONELAB/FLTK.
 - [고정 Gmsh source](https://gmsh.info/src/gmsh-4.15.2-source.tgz): DiscretizationError.cpp, OCCFace.cpp, gmsh.cpp. 기존 검토 증거이며 이번 문서 정리에서 전체 source를 새로 빌드한 것은 아니다.
 - [Git repository layout](https://git-scm.com/docs/gitrepository-layout), [Python 3.12 venv](https://docs.python.org/3.12/library/venv.html): .git의 역할과 가상환경 이동 제한.
+
+## 2026-10-21 생성 시간·NAS 용량·ONELAB 응답 개선
+
+### 원인과 변경 범위
+
+- 수정 전 source HEAD는 `0b5113a5b28f08f85b1716c142aa3f9b63fd1645`다. `01_mesh_generator`는 보관 source를 읽어 비교했으며 실행·수정하거나 새 runtime에서 import하지 않았다. 아래 성능 비교의 기준은 **새 구현의 수정 전/후**이며, 옛 `01_mesh_generator`와의 실행 시간 비교로 해석하지 않는다.
+- 곡면 형상으로 전환할 때 UI가 Curvature를 강제로 켜고 상대 허용값 0.001을 넣었다. 구 R=1 mm, Target size=0.4 mm에서 OFF는 194 triangles / 11,214 bytes, 해당 조건 ON은 4,872 triangles / 309,307 bytes였다. 목표 길이 입력만 같아도 실제 이산화 조건과 요소 수는 같지 않았다. 형상 변경은 이제 기존 활성 상태·허용값을 보존한다. JSON에 명시한 곡률 조건은 유지한다.
+- 옛 writer와 새 writer는 모두 17자리 유효숫자의 free-field GRID/CTRIA3를 쓴다. 이번에는 좌표 자릿수를 줄이거나 허용오차를 완화해 용량을 줄이지 않았다. 동일한 실제 메쉬의 NAS 크기는 유지하며 의도하지 않은 세분화를 제거한다.
+- cProfile에서 판 100×60 mm, h=1 mm, 14,038 triangles의 전체 11.56 s 중 topology가 8.30 s, `generate`는 0.22 s였다. 구 R=10 mm, h=0.5 mm, 12,100 triangles에서는 전체 16.54 s 중 topology 9.02 s, normals 4.52 s였다. 이 시간은 profiler를 켠 값으로 일반 사용의 wall-clock 측정과 구분한다.
+- Topology AABB 후보 검색을 node별 Python 순회에서 최대 2,048개 point 묶음으로 변경했다. 표면 분리·보호 gap·정밀도·T-junction 판정은 유지한다. Solid 법선은 batch의 모든 점이 안/밖으로 분류됐을 때만 공통 부호를 확정하며 혼합 batch는 기존 개별 판정으로 돌아간다. 대표 점 하나의 방향을 전체에 적용하지 않는다.
+- Trim 밖 표본의 분류는 정렬된 unique UV의 subset count를 분할하고 자식 count 합과 원래 count를 대조한다. 개별 ctypes 호출을 줄이며 trim 실패 차단·실제 표본 개수·허용값은 유지한다. 곡률 ON의 조밀한 CAD 표본 검사는 여전히 비싼 작업이다.
+- 기존 UI는 FLTK main thread에서 생성·검사·개선·독립 NAS 읽기를 모두 수행했다. 실제 launch는 이제 Gmsh를 별도로 소유하는 subprocess에서 이 작업을 실행하고, main thread는 `fltk.wait(0.05)`로 이벤트를 처리한다. 서로 다른 thread가 같은 Gmsh model을 동시에 조작하지 않는다. UI 표시와 완료 CAD import는 main thread에서 수행한다.
+- 내부 MSH 4.1 binary에 모든 차원·parametric node를 저장하고 전송 뒤 좌표·연결·ID·PID·surface digest 및 point/curve 경계를 정확히 대조한다. Gmsh 4.15.2의 MSH merge가 기존 Physical Group membership을 중복 추가하는 동작을 확인해, 직렬화된 group을 복원한 뒤 원 CAD fingerprint와 대조한다. 실패하면 발행을 차단한다.
+- 현재 메쉬의 source hash·CAD·field·경계 참조 검사와 최종 재검사, ICN, rollback, 독립 pyNastran 검증을 유지한다. NAS는 worker의 로컬 작업 폴더에서 검증하고 UI가 현재 설정·mesh의 일치를 확인한 뒤 최종 위치로 복사·hash 대조·rename한다. 취소/충돌/worker 비정상 종료의 중간 결과는 최종 NAS가 되지 않는다.
+- Job은 `.cache/native-jobs/job-*` 한 폴더를 소유하고 완료/취소 때 그 폴더와 자식 process를 정리한다. 사용자 출력·보관 source·기존 cache 전체를 삭제하지 않는다. 매우 작은 메쉬에는 process 시작과 전송 비용이 추가된다. 큰 CAD의 완료 import나 화면 그리기 지연까지 없다는 보장은 하지 않는다.
+
+### 기능·응답 검증
+
+- `tests/test_native_job.py`: 실제 subprocess에서 plate, sphere, ogive, cube, cylinder, dihedral, 원형 BREP의 Generate → Improve → Publish가 CLI NAS와 byte 단위로 같다. 실행 중 설정 변경·메쉬 변경·이미 불량인 현재 메쉬·worker crash·중복 Action·취소를 검증한다.
+- 수정 전 source를 로컬 `.cache/perf-original`에 복사해 비교했다. 무작위 triangle 연결, 1 / 10^-6 / 10^6 축척, 비스듬한 정확한 T-junction을 포함한 60건에서 issue/code/status, 연결 성분 수, 열린 경계, 인접 크기 비율이 모두 같았다. 별도 회귀는 2,048 point batch를 넘는 oblique T-junction을 검사한다.
+- 실제 FLTK 창의 dense plate 14,038 triangles에서 53회 event pump, 최대 pump 간격 0.266 s를 기록했다. 상대 허용값 0.001인 sphere 4,872 triangles에서는 153회, 최대 0.344 s였다. 이는 API로 Action을 입력한 lifecycle/응답 측정이며 사용자의 마우스 수동 조작 시험은 아니다.
+- 재현 도구: `python -m tools.performance_probe --label <이름> [--plain --repeat 3 --case plate --case sphere]`, `python -m tools.native_ui_smoke <configuration.json>`. 측정 NAS·profile·JSON과 smoke 산출물은 `.cache`에만 둔다. 제품에는 NAS 한 파일만 전달한다.
+- 회귀 실행: `pytest --basetemp=.cache/perf-tests-all`은 349건 중 347건 통과, 2건은 이전 자동 곡률 활성화 정책을 기대한 assertion이었다. 해당 2건을 형상 전환의 opt-in 유지와 명시적 곡률 활성화 검증으로 갱신한 후 `tests/test_reassessment.py` 10건이 모두 통과했다(46.62 s). 전체 실행 후 추가한 thin_plate/gaps subprocess 왕복과 2,048-point 초과 T-junction 3건도 통과했다(10.23 s). 현재 수집되는 352개 항목을 이 실행들로 모두 확인했으며, 최종 코드에서 352건을 한 번에 재실행했다는 뜻은 아니다.
+- Guide의 중복 ID·누락 anchor·외부 CSS/JS 의존과 이전 자동 활성화 안내가 남아 있지 않은지 확인했다. 이번 guide 변경은 기존 레이아웃의 문장 수정이며 브라우저 전체 시각 QA를 새로 수행한 것은 아니다.
+
+### Profiler 없이 3회씩 순차 측정한 최종 비교
+
+같은 Python/Gmsh 의존성, 같은 형상·목표 길이·곡률 OFF·기본 개선 설정으로 CLI 코어의 생성부터 독립 NAS 검증까지 측정했다. 수정 전 6회 후 수정 후 6회를 실행했으며 다른 이번 작업의 테스트/benchmark를 동시에 돌리지 않았다. 프로세스 시작·ONELAB 표시 시간은 이 표에 포함하지 않는다. 중앙값이며 모든 입력의 속도 보장은 아니다.
+
+| 조건 | 수정 전 중앙값 (범위) | 수정 후 중앙값 (범위) | 상대 속도 | NAS |
+|---|---:|---:|---:|---|
+| 판 100×60 mm, h=1 mm, 14,038 triangles | 9.40 s (6.25–10.23) | 4.13 s (1.75–4.38) | 2.28배 | 772,724 bytes, 전후 동일 |
+| 구 R=10 mm, h=0.5 mm, 12,100 triangles | 11.59 s (11.51–12.40) | 6.13 s (6.03–6.23) | 1.89배 | 765,109 bytes, 전후 동일 |
+
+두 조건의 각 6개 NAS는 node/triangle 수·바이트 수·SHA256가 모두 일치했다. 별도의 profiler 4조건(곡률 OFF 조밀 판·구, coarse 구, 상대 곡률 ON 구)에서도 전후 NAS가 모두 동일했다. 최종 상세 JSON은 `.cache/performance/summary.json`, 원본 wall-clock 결과는 `.cache/perf-original/.cache/performance/before-plain/results.json`과 `.cache/performance/after-plain/results.json`에 있다.

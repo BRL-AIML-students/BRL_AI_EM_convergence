@@ -64,17 +64,23 @@ class _Boxes:
             self.nodes[index] = (lo, hi, None, self._build(ordered[:middle]), self._build(ordered[middle:]))
         return index
 
-    def candidates(self, point):
-        pending = [self.root]
+    def candidates(self, points):
+        """Yield point/edge arrays, visiting each box once per point batch."""
+        pending = [(self.root, np.arange(len(points)))]
         while pending:
-            lo, hi, ids, left, right = self.nodes[pending.pop()]
-            if np.any(point < lo) or np.any(point > hi):
+            index, point_ids = pending.pop()
+            lo, hi, ids, left, right = self.nodes[index]
+            point_ids = point_ids[np.all((points[point_ids] >= lo) & (points[point_ids] <= hi), axis=1)]
+            if not len(point_ids):
                 continue
             if ids is None:
-                pending.extend((left, right))
+                pending.extend(((left, point_ids), (right, point_ids)))
             else:
-                mask = np.all(self.low[ids] <= point, axis=1) & np.all(self.high[ids] >= point, axis=1)
-                yield from map(int, ids[mask])
+                candidates = points[point_ids, None, :]
+                mask = np.all((candidates >= self.low[ids]) & (candidates <= self.high[ids]), axis=2)
+                rows, columns = np.nonzero(mask)
+                if len(rows):
+                    yield point_ids[rows], ids[columns]
 
 
 def inspect_topology(mesh: SurfaceMesh, intent: BoundaryIntent) -> TopologyValues:
@@ -139,29 +145,39 @@ def inspect_topology(mesh: SurfaceMesh, intent: BoundaryIntent) -> TopologyValue
     tolerance = np.maximum(exact, lengths * intent.relative_tolerance)
     tree = _Boxes(np.minimum(a, b) - tolerance[:, None], np.maximum(a, b) + tolerance[:, None])
     codes = set()
-    for node, point in zip(map(int, mesh.node_ids), mesh.coordinates):
-        for ei in tree.candidates(point):
-            edge = tuple(map(int, edge_nodes[ei]))
-            if node in edge:
+    for start in range(0, len(mesh.node_ids), 2048):
+        points = mesh.coordinates[start:start+2048]
+        for rows, edge_ids in tree.candidates(points):
+            nodes = mesh.node_ids[start+rows]
+            keep = np.all(nodes[:, None] != edge_nodes[edge_ids], axis=1)
+            rows, edge_ids, nodes = rows[keep], edge_ids[keep], nodes[keep]
+            if not len(rows):
                 continue
-            edge_surfaces = {int(mesh.surface_tags[owner[0]]) for owner in edges[edge]}
-            if all(tuple(sorted((s, t))) in separated for s in node_surfaces[node] for t in edge_surfaces):
-                continue
-            tau = float(tolerance[ei])
-            projection = float(np.dot(point - a[ei], vector[ei]) / lengths[ei] ** 2)
-            distance = float(np.linalg.norm(point - a[ei] - projection * vector[ei]))
-            if distance > tau:
-                continue
-            if intent.protected_gap is not None and tau >= intent.protected_gap / 10:
-                codes.add(('gap_tolerance_conflict', 'incomplete'))
-                continue
-            endpoint_distance = min(np.linalg.norm(point - a[ei]), np.linalg.norm(point - b[ei]))
-            if endpoint_distance <= tau:
-                codes.add(('unshared_coincident_nodes' if endpoint_distance <= exact[ei] else 'ambiguous_proximity',
-                           'blocked' if endpoint_distance <= exact[ei] else 'incomplete'))
-            elif tau / lengths[ei] < projection < 1 - tau / lengths[ei]:
-                codes.add(('t_junction' if distance <= exact[ei] else 'ambiguous_proximity',
-                           'blocked' if distance <= exact[ei] else 'incomplete'))
+            offsets = points[rows] - a[edge_ids]
+            vectors = vector[edge_ids]
+            projections = np.einsum('ij,ij->i', offsets, vectors) / lengths[edge_ids]**2
+            distances = np.linalg.norm(offsets - projections[:, None]*vectors, axis=1)
+            close = distances <= tolerance[edge_ids]
+            # Only geometric contacts need the per-surface separation policy.
+            for node, ei, projection, distance in zip(nodes[close], edge_ids[close],
+                                                       projections[close], distances[close]):
+                node, ei = int(node), int(ei)
+                point = mesh.coordinates[np.searchsorted(mesh.node_ids, node)]
+                edge = tuple(map(int, edge_nodes[ei]))
+                edge_surfaces = {int(mesh.surface_tags[owner[0]]) for owner in edges[edge]}
+                if all(tuple(sorted((s, t))) in separated for s in node_surfaces[node] for t in edge_surfaces):
+                    continue
+                tau = float(tolerance[ei])
+                if intent.protected_gap is not None and tau >= intent.protected_gap / 10:
+                    codes.add(('gap_tolerance_conflict', 'incomplete'))
+                    continue
+                endpoint_distance = min(np.linalg.norm(point - a[ei]), np.linalg.norm(point - b[ei]))
+                if endpoint_distance <= tau:
+                    codes.add(('unshared_coincident_nodes' if endpoint_distance <= exact[ei] else 'ambiguous_proximity',
+                               'blocked' if endpoint_distance <= exact[ei] else 'incomplete'))
+                elif tau / lengths[ei] < projection < 1 - tau / lengths[ei]:
+                    codes.add(('t_junction' if distance <= exact[ei] else 'ambiguous_proximity',
+                               'blocked' if distance <= exact[ei] else 'incomplete'))
     for code, status in sorted(codes):
         issues.append(Issue(code, '공유되지 않은 node/edge 관계 또는 불확실한 근접 관계가 있습니다', status))
     return TopologyValues(tuple(issues), count, boundary, adjacent_ratio)

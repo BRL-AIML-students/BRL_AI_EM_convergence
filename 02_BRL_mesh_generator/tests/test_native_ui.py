@@ -144,6 +144,7 @@ def test_native_error_consumes_action_without_publishing(controller, config):
 def test_real_native_loop_wiring_on_fake_fltk_surface(config, monkeypatch):
     # Controller/ONELAB/Gmsh remain real; this test does not claim visual QA.
     events = []
+    monkeypatch.setattr(ui, 'AsyncController', ui.Controller)
     monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: events.append('initialize'))
     monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda name: events.append(name))
     monkeypatch.setattr(gmsh.fltk, 'isAvailable', lambda: True)
@@ -161,6 +162,7 @@ def test_real_native_loop_wiring_on_fake_fltk_surface(config, monkeypatch):
 
 
 def test_window_close_during_wait_does_not_reopen_or_dispatch(config, monkeypatch):
+    monkeypatch.setattr(ui, 'AsyncController', ui.Controller)
     available = True
     monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: None)
     monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda _: None)
@@ -180,6 +182,7 @@ def test_window_close_during_wait_does_not_reopen_or_dispatch(config, monkeypatc
 def test_idle_loop_preserves_widgets_after_one_change(config, monkeypatch, change):
     """Unchanged inputs must not rebuild widgets or rewrite ONELAB parameters."""
     cycles, updates, writes = 0, [], []
+    monkeypatch.setattr(ui, 'AsyncController', ui.Controller)
     set_string, set_number = gmsh.onelab.setString, gmsh.onelab.setNumber
     monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: None)
     monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda _: None)
