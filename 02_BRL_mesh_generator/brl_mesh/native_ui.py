@@ -352,11 +352,6 @@ class Controller:
             kind = _string(KIND)
             if kind != self.kind:
                 self.kind = kind
-                if kind in ('ogive', 'sphere', 'cylinder') and not _flag(CURVATURE_ENABLED):
-                    for name, value in ((CURVATURE_ENABLED, 1), (ABS_ENABLED, 0),
-                                        (REL_ENABLED, 1), (REL_TOL, .001)):
-                        gmsh.onelab.setNumber(name, [value])
-                    self.ui_dirty = True
             state = visibility_signature()
             if state != self.visible_state:
                 update_visibility()
@@ -448,30 +443,90 @@ class Controller:
             self.status(f'Blocked: {exc}; 이번 실행 NAS 없음')
 
 
+class AsyncController(Controller):
+    """The native window pumps events while another process owns numerical work."""
+    def __init__(self, base, base_dir):
+        super().__init__(base, base_dir)
+        self.job = None
+
+    def perform(self, action):
+        if type(action) is not int or action not in ACTIONS:
+            raise ConfigurationError('지원하지 않는 Action입니다')
+        if action == 5:
+            self.close_requested = True
+            return
+        if self.job is not None:
+            self.status('Working: wait for the current action, or Close to cancel')
+            return
+        if action == 0:
+            return
+        from .native_job import NativeJob
+        self.invalidate_if_changed(deep=False)
+        config = read_controls(self.base, self.base_dir)
+        self.job = NativeJob(config, action, self.scene)
+        if action in (1, 2):
+            self.scene, self.last_mesh = None, None
+        self.status('Working: starting isolated job')
+
+    def poll(self):
+        if self.job is None or self.close_requested:
+            return
+        job = self.job
+        try:
+            result = job.result()
+            if result is None:
+                self.status('Working: '+job.phase())
+                return
+            if read_controls(self.base, self.base_dir) != job.config:
+                raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
+            self.scene, self.last_mesh = job.adopt(result, self.scene)
+            if job.action != 4:
+                display_mesh(fit=job.action in (1, 2))
+            path = job.commit_publication(result)
+            self.status('NAS published' if path else
+                        ('Mesh ready: required checks passed' if job.action == 2 else
+                         'Current mesh checked; improvement completed if needed'), path)
+        except Exception as exc:
+            self.scene, self.last_mesh = None, None
+            self.status(f'Blocked: {exc}; 이번 실행 NAS 없음')
+        job.close()
+        self.job = None
+
+    def cancel(self):
+        if self.job is not None:
+            self.job.close()
+            self.job = None
+
+
 def launch(config: Configuration, base_dir: Path) -> None:
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError('ONELAB/FLTK는 main thread에서 실행해야 합니다')
     if gmsh.isInitialized():
         raise RuntimeError('기존 Gmsh session이 있습니다. 독립 프로세스에서 실행하세요')
     gmsh.initialize(readConfigFiles=False)
+    controller = None
     try:
         gmsh.option.setNumber('General.Terminal', 0)
-        # Keep all intermediates in memory; do not persist native preferences.
+        # Job intermediates use their own local cache; do not persist preferences.
         gmsh.option.setNumber('General.SaveOptions', 0)
-        controller = Controller(config, base_dir)
+        controller = AsyncController(config, base_dir)
         gmsh.fltk.initialize()
         gmsh.fltk.openTreeItem('ONELAB')
         while gmsh.fltk.isAvailable() and not controller.close_requested:
-            gmsh.fltk.wait(.2)
+            gmsh.fltk.wait(.05)
             if not gmsh.fltk.isAvailable():
                 break
             controller.invalidate_if_changed(deep=False)
             controller.dispatch()
+            if hasattr(controller, 'poll'):
+                controller.poll()
             # update() rebuilds ONELAB widgets; wait() already pumps UI events.
             if controller.ui_dirty and not controller.close_requested:
                 gmsh.fltk.update()
                 controller.ui_dirty = False
     finally:
+        if controller is not None and hasattr(controller, 'cancel'):
+            controller.cancel()
         gmsh.finalize()
 
 

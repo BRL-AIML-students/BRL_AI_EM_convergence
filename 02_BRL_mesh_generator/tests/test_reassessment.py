@@ -55,19 +55,25 @@ def test_generation_fits_camera_once_and_shows_triangles(controller):
     assert gmsh.option.getNumber('General.ScaleX') == 1.7
 
 
-def test_switch_to_curved_shape_enables_scale_independent_default(controller):
+def test_switch_to_curved_shape_preserves_curvature_opt_in(controller):
     gmsh.onelab.setString(ui.KIND, ['ogive'])
     controller.invalidate_if_changed(deep=False)
     config = ui.read_controls(controller.base, controller.base_dir)
-    assert config.sizing.curvature.relative_tolerance == .001
-    assert config.sizing.curvature.absolute_tolerance is None
-    gmsh.onelab.setNumber(ui.CURVATURE_ENABLED, [0])
+    assert config.sizing.curvature is None
+    for name, value in [(ui.CURVATURE_ENABLED, 1), (ui.ABS_ENABLED, 0),
+                        (ui.REL_ENABLED, 1), (ui.REL_TOL, .002)]:
+        gmsh.onelab.setNumber(name, [value])
+    gmsh.onelab.setString(ui.KIND, ['sphere'])
     controller.invalidate_if_changed(deep=False)
-    assert ui.read_controls(controller.base, controller.base_dir).sizing.curvature is None
+    curvature = ui.read_controls(controller.base, controller.base_dir).sizing.curvature
+    assert curvature.relative_tolerance == .002 and curvature.absolute_tolerance is None
 
 
-def test_curved_shape_default_generates_and_publishes(controller):
+def test_explicit_curvature_generates_and_publishes(controller):
     gmsh.onelab.setString(ui.KIND, ['ogive'])
+    for name, value in [(ui.CURVATURE_ENABLED, 1), (ui.ABS_ENABLED, 0),
+                        (ui.REL_ENABLED, 1), (ui.REL_TOL, .001)]:
+        gmsh.onelab.setNumber(name, [value])
     assert action(controller, 1) == 'NAS published'
     assert controller.scene.curvature.history[-1][1] <= 1
     assert 'run_ogive_' in gmsh.onelab.getString(ui.NAS_PATH)[0]

@@ -63,6 +63,37 @@ def _array(value, columns, count, name):
     return result.reshape(count, columns)
 
 
+def _trim_mask(tag, parameters, count):
+    """Recover individual classifications from checked subset counts.
+
+    Sorting unique UV points groups trim boundaries and removes repeated edge
+    samples. A mixed subset is split; its child counts must sum to its count.
+    """
+    unique, inverse = np.unique(parameters, axis=0, return_inverse=True)
+    mask = np.empty(len(unique), dtype=bool)
+
+    def classify(start, stop, known=None):
+        value = (gmsh.model.isInside(2, tag, unique[start:stop].ravel(), parametric=True)
+                 if known is None else known)
+        if not 0 <= value <= stop-start:
+            raise MeshBlocked('projection_trim_incomplete: trim 점 분류 실패')
+        if value in (0, stop-start):
+            mask[start:stop] = bool(value)
+        else:
+            middle = (start+stop)//2
+            left = classify(start, middle)
+            right = classify(middle, stop)
+            if left+right != value:
+                raise MeshBlocked('projection_trim_incomplete: trim batch/point 분류 불일치')
+        return value
+
+    classify(0, len(unique))
+    result = mask[inverse]
+    if int(result.sum()) != count:
+        raise MeshBlocked('projection_trim_incomplete: trim batch/point 분류 불일치')
+    return result
+
+
 def project(dimension, tag, points, *, trimmed=True):
     """Return validated projections, including curve trim endpoints."""
     points = np.asarray(points, dtype=float).reshape(-1, 3)
@@ -88,15 +119,7 @@ def project(dimension, tag, points, *, trimmed=True):
             if not 0 <= count <= len(points):
                 raise MeshBlocked('projection_trim_incomplete: trim 분류 개수가 유효하지 않습니다')
             if count != len(points):
-                mask = []
-                for point in parameters:
-                    inside = gmsh.model.isInside(2, tag, point, parametric=True)
-                    if inside not in (0, 1):
-                        raise MeshBlocked('projection_trim_incomplete: trim 점 분류 실패')
-                    mask.append(bool(inside))
-                if sum(mask) != count:
-                    raise MeshBlocked('projection_trim_incomplete: trim batch/point 분류 불일치')
-                outside = np.flatnonzero(~np.asarray(mask))
+                outside = np.flatnonzero(~_trim_mask(tag, parameters, count))
                 curves = sorted({abs(edge) for dim, edge in gmsh.model.getBoundary(
                     [(2, tag)], combined=False, oriented=False) if dim == 1})
                 if not curves:

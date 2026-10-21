@@ -61,3 +61,15 @@ def test_multiple_solid_owners_are_incomplete():
     with cad_mesh('shared_face') as membership:
         result = inspect_normals(snapshot(membership), {})
         assert any(x.status == 'incomplete' for x in result.issues)
+
+
+def test_mixed_cad_normal_signs_are_classified_individually():
+    from brl_mesh.normals import _outward_signs
+    with cad_mesh('sphere'):
+        volume = gmsh.model.getEntities(3)[0][1]
+        low, high = gmsh.model.getBoundingBox(3, volume)[:3], gmsh.model.getBoundingBox(3, volume)[3:]
+        center = (np.asarray(low)+np.asarray(high))/2
+        radius = (high[0]-low[0])/2 - 1e-7
+        points = center+np.array([[radius, 0, 0], [0, radius, 0], [-radius, 0, 0]])
+        normals = np.array([[1., 0, 0], [0, -1., 0], [-1., 0, 0]])
+        assert np.array_equal(_outward_signs(volume, points, normals, np.full(3, radius)), [1, -1, 1])
