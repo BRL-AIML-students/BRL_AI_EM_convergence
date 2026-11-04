@@ -63,6 +63,13 @@ def inspect_normals(mesh: SurfaceMesh, sheet_signs: dict[int, int]) -> NormalVal
     reference. Missing CAD operations/direction remain incomplete and block output.
     """
     mesh.validate()
+    xyz = mesh.triangles()
+    cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
+    return _inspect_normals(mesh, sheet_signs, xyz, cross, np.linalg.norm(cross, axis=1))
+
+
+def _inspect_normals(mesh, sheet_signs, xyz, cross, magnitude):
+    """Internal calculation with coordinates validated by this transaction."""
     issues, owners = [], defaultdict(set)
     try:
         for _, volume in gmsh.model.getEntities(3):
@@ -71,9 +78,6 @@ def inspect_normals(mesh: SurfaceMesh, sheet_signs: dict[int, int]) -> NormalVal
                     owners[abs(int(tag))].add(int(volume))
     except Exception as exc:
         return NormalValues((Issue('cad_owners_unavailable', str(exc), 'incomplete'),), float('inf'), float('inf'))
-    xyz = mesh.triangles()
-    cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
-    magnitude = np.linalg.norm(cross, axis=1)
     max_centroid, max_node = 0.0, 0.0
     for surface in sorted(set(map(int, mesh.surface_tags))):
         indices = np.flatnonzero(mesh.surface_tags == surface)

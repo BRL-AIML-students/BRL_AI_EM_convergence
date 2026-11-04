@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
+import re
+import tempfile
 
 import gmsh
 import numpy as np
@@ -10,6 +13,35 @@ import numpy as np
 from .config import UNIT_METRES
 from .errors import MeshBlocked
 from .features import Feature, discover
+
+
+def _background_field():
+    """Read actual Gmsh selection without reapplying or trusting our setter.
+
+    Gmsh 4.15.2 has no Python getter. Its writeGEO serializes the active field
+    as `Background Field = N;` (and omits it when disabled). OCC also writes an
+    XAO companion; keep both in an owned local directory, then remove them.
+    No Gmsh options, entities, views or field selections are changed.
+    """
+    cache = Path(__file__).resolve().parent.parent / '.cache' / 'field-state'
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='selection-', dir=cache) as local:
+            path = Path(local) / 'state.geo_unrolled'
+            gmsh.write(str(path))
+            values = []
+            with path.open(encoding='utf-8') as stream:
+                for line in stream:
+                    if line.startswith('Background Field'):
+                        match = re.fullmatch(r'Background Field = ([1-9][0-9]*);\s*', line)
+                        if match is None:
+                            raise ValueError('invalid background field serialization')
+                        values.append(int(match[1]))
+            if len(values) > 1:
+                raise ValueError('ambiguous background field serialization')
+            return values[0] if values else None
+    except Exception as exc:
+        raise MeshBlocked(f'size_field_incomplete: 활성 background field 조회 실패: {exc}') from exc
 
 
 @dataclass(frozen=True)
@@ -52,6 +84,10 @@ class SizingPlan:
             raise MeshBlocked('size_field_changed: 크기장 구성이 변경됐습니다. 다시 생성하세요')
         for field in self.fields:
             field.require_current()
+        # Gmsh also accepts an unregistered positive ID as its selection, so an
+        # empty field list does not establish that the background is disabled.
+        if _background_field() != self.background:
+            raise MeshBlocked('size_field_changed: 활성 background field가 변경됐습니다. 다시 생성하세요')
         if any(gmsh.option.getNumber(name) != value for name, value in self.options):
             raise MeshBlocked('size_options_changed: 적용한 크기 옵션이 변경됐습니다. 다시 생성하세요')
 
@@ -100,6 +136,25 @@ class SizingPlan:
         if not self.features:
             return 0.
         xyz = mesh.triangles()
+        # Deduplication pays for itself only when reused by several CAD queries
+        # in the representative width audits. Keep inexpensive manual/Box paths
+        # unchanged; this performance dispatch does not alter sampling policy.
+        if sum(len(item.feature.curves) for item in self.features) >= 4:
+            maximum = 0.
+            for offset in range(0, len(xyz), 4096):
+                batch = xyz[offset:offset+4096]
+                start = batch.reshape(-1, 3)
+                end = batch[:, [1, 2, 0]].reshape(-1, 3)
+                midpoint = (start+end)/2
+                surfaces = np.repeat(mesh.surface_tags[offset:offset+4096], 3)
+                # Keep exact original midpoint arithmetic and surface identity:
+                # Restrict can assign different targets at the same CAD point.
+                keys = np.rec.fromarrays([surfaces, *midpoint.T])
+                _, first, inverse = np.unique(keys, return_index=True, return_inverse=True)
+                target = self.nominal_sizes(midpoint[first], surfaces[first])[inverse]
+                maximum = max(maximum, float(np.max(np.linalg.norm(end-start, axis=1)/target)))
+            return maximum
+        # Box-only audits are inexpensive vector arithmetic; avoid sorting them.
         start = xyz.reshape(-1, 3)
         end = xyz[:, [1, 2, 0]].reshape(-1, 3)
         midpoint = (start+end)/2
@@ -130,20 +185,54 @@ def curve_sampling(curves, size, hold, transition, settings):
     spacing = settings.sampling_fraction*min(size, transition, hold if hold > 0 else size)
     if spacing <= 0 or not math.isfinite(spacing):
         raise MeshBlocked('sampling_incomplete: 거리 field 표본 간격을 표현하지 못했습니다')
-    requested = 2*max(gmsh.model.occ.getMass(1, c) for c in curves)/spacing
+    references = {}
+    try:
+        for curve in curves:
+            mass = gmsh.model.occ.getMass(1, curve)
+            low, high = (np.asarray(v, dtype=float).reshape(-1)
+                         for v in gmsh.model.getParametrizationBounds(1, curve))
+            if (not math.isfinite(mass) or mass <= 0 or low.size != 1 or high.size != 1
+                    or not np.isfinite(low).all() or not np.isfinite(high).all() or low[0] >= high[0]):
+                raise ValueError(f'curve {curve}: CAD 길이/parameter 범위가 유효하지 않습니다')
+            references[curve] = (mass, low[0], high[0])
+        if not references:
+            raise ValueError('CAD curve가 없습니다')
+    except Exception as exc:
+        raise MeshBlocked(f'sampling_incomplete: {exc}') from exc
+    requested = 2*max(mass for mass, _, _ in references.values())/spacing
     if not math.isfinite(requested):
         raise MeshBlocked('sampling_incomplete: 필요한 표본 수가 유한 범위를 초과했습니다')
     count = max(8, math.ceil(requested)+2)
     while True:
         stable = True
-        for curve in curves:
-            low, high = gmsh.model.getParametrizationBounds(1, curve)
-            points = np.asarray(gmsh.model.getValue(1, curve, np.linspace(low[0], high[0], count))).reshape(-1, 3)
-            lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
-            mass = gmsh.model.occ.getMass(1, curve)
-            if not np.isfinite(points).all() or not len(lengths):
-                raise MeshBlocked('sampling_incomplete: CAD 거리 표본이 유효하지 않습니다')
-            if lengths.max() > spacing or lengths.sum() < .999*mass:
+        for curve, (mass, low, high) in references.items():
+            try:
+                with np.errstate(over='ignore', invalid='ignore'):
+                    parameters = np.linspace(low, high, count)
+                    if not np.isfinite(parameters).all() or np.any(np.diff(parameters) < 0):
+                        raise ValueError('CAD parameter 표본을 유한한 순서로 표현하지 못했습니다')
+                    points = np.asarray(gmsh.model.getValue(1, curve, parameters), dtype=float)
+                    if points.size != count*3 or not np.isfinite(points).all():
+                        raise ValueError('CAD 거리 표본이 누락됐거나 유효하지 않습니다')
+                    lengths = np.linalg.norm(np.diff(points.reshape(count, 3), axis=0), axis=1)
+                    total = lengths.sum()
+                if not np.isfinite(lengths).all() or not math.isfinite(total):
+                    raise ValueError('CAD chord 길이 계산이 유한하지 않습니다')
+            except Exception as exc:
+                raise MeshBlocked(f'sampling_incomplete: curve {curve}: {exc}') from exc
+            too_long = lengths > spacing
+            missing_length = total < .999*mass
+            if np.any(too_long) or missing_length:
+                # A plateau alone proves nothing: a later grid can reveal a
+                # small feature. Stop only when float64 admits no parameter
+                # insertion in an interval that still violates the spacing,
+                # or in the entire domain when chord coverage still fails.
+                refinable = np.nextafter(parameters[:-1], parameters[1:]) < parameters[1:]
+                if np.any(too_long & ~refinable) or (missing_length and not np.any(refinable)):
+                    raise MeshBlocked(f'sampling_precision_conflict: curve {curve}, '
+                                      f'max_chord={lengths.max():g}, spacing={spacing:g}, '
+                                      f'chord_sum={total:g}, CAD_length={mass:g}; '
+                                      '추가 CAD parameter를 표현할 수 없습니다')
                 stable = False
                 break
         if stable:

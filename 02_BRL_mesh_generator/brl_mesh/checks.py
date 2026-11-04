@@ -30,17 +30,28 @@ class ShapeValues:
 
     def require_pass(self) -> None:
         if self.violating_count:
-            raise MeshBlocked('형상 조건 AR ≤ 3, 최소각 ≥ 20°를 만족하지 않습니다')
+            raise MeshBlocked('형상 조건 AR ≤ 3, 최소각 ≥ 20°를 만족하지 않습니다: '
+                              f'최대 AR={self.aspect_ratio_max:.6g}, '
+                              f'최소각={self.minimum_angle_deg:.6g}°, 위반 요소={self.violating_count}')
 
 
 def measure_shape(mesh: SurfaceMesh) -> ShapeValues:
     """AR=Lmax*perimeter/(4 sqrt(3) area); policy is not an ICN conversion."""
     mesh.validate()
-    xyz = mesh.triangles()
-    scale = float(np.max(np.ptp(mesh.coordinates, axis=0)))
-    if not math.isfinite(scale) or scale <= 0:
+    return _measure_shape(mesh.triangles())
+
+
+def _measure_shape(xyz: np.ndarray) -> ShapeValues:
+    """Internal calculation for already validated triangle coordinates."""
+    # Shape is local: a distant disconnected component must not turn a valid
+    # triangle into a degenerate one. validate() retains the original-coordinate
+    # subtraction/area checks before this normalization.
+    xyz = xyz - xyz[:, :1]
+    edges = np.stack([xyz[:, (i + 1) % 3] - xyz[:, i] for i in range(3)], axis=1)
+    scale = np.max(np.abs(edges), axis=(1, 2))
+    if not np.isfinite(scale).all() or np.any(scale <= 0):
         raise MeshBlocked('형상 길이 범위가 유효하지 않습니다')
-    xyz = (xyz - xyz[:, :1]) / scale
+    xyz = xyz / scale[:, None, None]
     edges = np.stack([xyz[:, (i + 1) % 3] - xyz[:, i] for i in range(3)], axis=1)
     lengths = np.linalg.norm(edges, axis=2)
     area = np.linalg.norm(np.cross(xyz[:, 1], xyz[:, 2]), axis=1) / 2

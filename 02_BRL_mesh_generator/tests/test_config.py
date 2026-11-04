@@ -11,6 +11,27 @@ BASE = {'schema_version': 1, 'geometry': {'kind': 'plate', 'length': 1, 'width':
         'mesh': {'target_size': 0.1}}
 
 
+@pytest.mark.parametrize('feedback', ['entity', 'local'])
+def test_curvature_feedback_roundtrip(feedback):
+    data = copy.deepcopy(BASE)
+    data['mesh']['curvature'] = {'absolute_tolerance': .01, 'feedback': feedback}
+    config = Configuration.from_dict(data)
+    assert config.sizing.curvature.feedback == feedback
+    assert Configuration.from_dict(config.to_dict()).sizing.curvature.feedback == feedback
+
+
+def test_curvature_feedback_default_and_invalid():
+    data = copy.deepcopy(BASE)
+    data['mesh']['curvature'] = {'absolute_tolerance': .01}
+    config = Configuration.from_dict(data)
+    assert config.sizing.curvature.feedback == 'entity'
+    assert config.to_dict()['mesh']['curvature']['feedback'] == 'entity'
+    for value in ('other', '', None, True, [], 1):
+        data['mesh']['curvature']['feedback'] = value
+        with pytest.raises(ConfigurationError):
+            Configuration.from_dict(data)
+
+
 @pytest.mark.parametrize('section,key,value', [
     (None, 'schema_version', True), (None, 'schema_version', 2),
     (None, 'output_unit', []), (None, 'output_dir', ''),

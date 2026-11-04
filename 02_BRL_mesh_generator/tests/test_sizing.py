@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from brl_mesh.config import Configuration
+from brl_mesh import sizing
+from brl_mesh.cad import fingerprint
 from brl_mesh.engine import mesh_model, publish, run
 from brl_mesh.errors import MeshBlocked, ConfigurationError
 from brl_mesh.inspection import inspect_mesh
@@ -347,3 +349,82 @@ def test_field_api_failure_does_not_fallback_or_damage_previous_output(tmp_path,
     assert not gmsh.isInitialized()
     assert list(config.output_dir.rglob('mesh.nas'))==[previous]
     assert previous.read_bytes()==b'previous result'
+
+
+@pytest.mark.parametrize('selection', ['constant', 'disabled'])
+def test_background_selection_change_requires_regeneration(tmp_path, selection):
+    config=plate(tmp_path,{'target_size':1,'local':{
+        'boxes':[{'bounds':[4,4,-.1,6,6,.1],'size':.3}]}})
+    with mesh_model(config) as scene:
+        mesh=snapshot(scene.membership)
+        tag=next(b.tag for b in scene.sizing.fields if b.kind=='MathEval') if selection=='constant' else 0
+        gmsh.model.mesh.field.setAsBackgroundMesh(tag)
+        with pytest.raises(MeshBlocked, match='size_field_changed.*background'):
+            scene.require_current(config)
+        with pytest.raises(MeshBlocked, match='size_field_changed.*background'):
+            publish(mesh,config,scene)
+    assert not config.output_dir.exists()
+
+
+@pytest.mark.parametrize('local_fields', [False, True])
+def test_background_query_preserves_model_mesh_views_options_and_cleans_files(tmp_path,local_fields,monkeypatch):
+    settings={'target_size':1}
+    if local_fields:
+        settings['local']={'boxes':[{'bounds':[4,4,-.1,6,6,.1],'size':.3}]}
+    config=plate(tmp_path,settings)
+    with mesh_model(config) as scene:
+        view=gmsh.view.add('preserve me')
+        gmsh.option.setNumber('View[0].Visible', 0)
+        mesh=snapshot(scene.membership)
+        before=(fingerprint(), gmsh.model.getCurrent(), gmsh.model.getFileName(),
+                tuple(gmsh.view.getTags()), gmsh.option.getNumber('View[0].Visible'),
+                tuple((name,gmsh.option.getNumber(name)) for name,_ in scene.sizing.options))
+        owned=[]
+        original_write=gmsh.write
+        def record_write(path):
+            owned.append(sizing.Path(path).parent)
+            return original_write(path)
+        monkeypatch.setattr(gmsh,'write',record_write)
+        assert sizing._background_field()==scene.sizing.background
+        scene.sizing.require_current()
+        after=(fingerprint(), gmsh.model.getCurrent(), gmsh.model.getFileName(),
+               tuple(gmsh.view.getTags()), gmsh.option.getNumber('View[0].Visible'),
+               tuple((name,gmsh.option.getNumber(name)) for name,_ in scene.sizing.options))
+        assert after==before
+        current=snapshot(scene.membership)
+        assert current.same_structure(mesh)
+        np.testing.assert_array_equal(current.coordinates,mesh.coordinates)
+        assert owned and all(not path.exists() for path in owned)
+        gmsh.view.remove(view)
+
+
+def test_empty_field_list_does_not_hide_invalid_positive_background_selection(tmp_path):
+    config=plate(tmp_path,{'target_size':1})
+    with mesh_model(config) as scene:
+        assert not scene.sizing.fields
+        assert scene.sizing.background is None
+        mesh=snapshot(scene.membership)
+        gmsh.model.mesh.field.setAsBackgroundMesh(999)
+        assert not len(gmsh.model.mesh.field.list())
+        assert sizing._background_field()==999
+        with pytest.raises(MeshBlocked,match='size_field_changed.*background'):
+            scene.require_current(config)
+        with pytest.raises(MeshBlocked,match='size_field_changed.*background'):
+            publish(mesh,config,scene)
+    assert not config.output_dir.exists()
+
+
+def test_background_query_failure_blocks_and_removes_partial_owned_files(tmp_path, monkeypatch):
+    config=plate(tmp_path,{'target_size':1,'local':{
+        'boxes':[{'bounds':[4,4,-.1,6,6,.1],'size':.3}]}})
+    with mesh_model(config) as scene:
+        owned=[]
+        def broken(path):
+            owned.append(sizing.Path(path).parent)
+            sizing.Path(path).write_text('partial output',encoding='utf-8')
+            sizing.Path(path+'.xao').write_text('partial OCC',encoding='utf-8')
+            raise RuntimeError('serialize unavailable')
+        monkeypatch.setattr(gmsh,'write',broken)
+        with pytest.raises(MeshBlocked,match='size_field_incomplete.*serialize unavailable'):
+            scene.sizing.require_current()
+        assert owned and all(not path.exists() for path in owned)

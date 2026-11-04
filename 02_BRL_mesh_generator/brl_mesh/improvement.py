@@ -138,13 +138,18 @@ def improve(membership: dict[int, int], contract: MeshContract, settings: Improv
     # Connectivity/orientation/measurement failures never enter a relocation loop.
     inspection.require_nonshape_pass()
     attempts = []
+    rejected_methods = set()
     passes = settings.max_passes if settings.enabled else 0
     for i in range(passes):
         if inspection.shape.violating_count == 0:
             break
+        method = ('Relocate2D', 'Laplace2D')[i % 2]
+        # Rejection restores the exact same coordinates/parameters. Retrying
+        # this method before an accepted move repeats an exhausted candidate.
+        if method in rejected_methods:
+            break
         before, previous = mesh, inspection
         state = _State(before, _nodes(), _groups(), tuple(sorted(gmsh.model.getEntities())), _elements())
-        method = ('Relocate2D', 'Laplace2D')[i % 2]
         try:
             gmsh.model.mesh.optimize(method, niter=1, dimTags=[(2, t) for t in sorted(membership)])
             candidate = snapshot(membership, check_validity=False)
@@ -158,6 +163,7 @@ def improve(membership: dict[int, int], contract: MeshContract, settings: Improv
         except MeshBlocked:
             mesh, inspection = _rollback(state, membership, contract)
             attempts.append(Attempt(method, False, True))
+            rejected_methods.add(method)
             continue
         except Exception as exc:
             _rollback(state, membership, contract)
@@ -168,7 +174,9 @@ def improve(membership: dict[int, int], contract: MeshContract, settings: Improv
         accepted = fixed_nodes_preserved and _acceptable(previous, after)
         if accepted:
             mesh, inspection = candidate, after
+            rejected_methods.clear()
         else:
             mesh, inspection = _rollback(state, membership, contract)
+            rejected_methods.add(method)
         attempts.append(Attempt(method, accepted, not accepted))
     return ImprovementResult(mesh, inspection, tuple(attempts))

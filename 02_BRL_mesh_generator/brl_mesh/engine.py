@@ -6,10 +6,11 @@ from pathlib import Path
 import shutil
 import tempfile
 import uuid
+import math
 
 import gmsh
 
-from . import nas
+from . import nas, provenance
 from .cad import CadReference, build_geometry
 from .checks import check_plate_geometry
 from .config import CadFile, Configuration, Plate
@@ -40,6 +41,7 @@ class Scene:
     fixed_boundary: tuple
     sizing: SizingPlan
     curvature: CurvaturePlan | None = None
+    generation_provenance: str | None = None
 
     @property
     def membership(self) -> dict[int, int]:
@@ -65,6 +67,12 @@ def generate(config: Configuration) -> Scene:
     if gmsh.model.getEntities():
         raise RuntimeError('생성에는 비어 있는 Gmsh model이 필요합니다')
     reference, sizing, curvature = prepare_geometry(config)
+    return _generate_candidate(config, reference, sizing, curvature)
+
+
+def _generate_candidate(config, reference, sizing, curvature):
+    """Generate one candidate; exceptions never trigger an algorithm retry."""
+    generation_provenance = provenance.capture(config, reference.digest)
     for face, sign in reference.sheet_signs.items():
         gmsh.model.mesh.setReverse(2, face, sign < 0)
     while True:
@@ -82,7 +90,43 @@ def generate(config: Configuration) -> Scene:
         curvature.refine(deviation)
         del current, deviation  # Do not retain the previous arrays during regeneration.
         gmsh.model.mesh.clear()
-    return scene_from_current(config, reference, sizing, curvature)
+    return scene_from_current(config, reference, sizing, curvature, generation_provenance)
+
+
+
+def prepare_generated(scene, config, phase=None):
+    """Check/improve a new mesh, optionally regenerating one shape-only failure.
+
+    Never use for current-mesh actions: regeneration intentionally replaces IDs
+    and boundary discretization, whereas relocation preserves those invariants.
+    """
+    scene.require_current(config)
+    generation = provenance.require_current(scene.generation_provenance, config, scene.cad.digest)
+    prepared = improve(scene.membership, scene.contract, config.improvement)
+    prepared.inspection.require_nonshape_pass()
+    if (prepared.inspection.shape.violating_count and config.generation.quality_retry == 'delaunay'
+            and generation['configured_options']['Mesh.Algorithm'] == 6):
+        if not prepared.inspection.icn or any(not math.isfinite(v) or v <= 0
+                                               for v in prepared.inspection.icn.values()):
+            raise MeshBlocked('생성 재시도 전 ICN 유효성을 확인하지 못했습니다')
+        # Reject stale CAD/field/options before discarding the failed mesh.
+        scene.require_current(config)
+        provenance.require_current(scene.generation_provenance, config, scene.cad.digest)
+        if phase is not None:
+            phase('Shape-only failure: regenerating once with requested Algorithm 5')
+        gmsh.model.mesh.clear()
+        types, ids, _ = gmsh.model.mesh.getElements()
+        if any(len(block) for block in ids) or len(gmsh.model.mesh.getNodes()[0]):
+            raise MeshBlocked('생성 재시도 전에 이전 mesh를 완전히 제거하지 못했습니다')
+        scene.cad.require_current(config)
+        scene.sizing.require_current()
+        # Do not carry feedback scales, cached samples or failed candidate IDs.
+        curvature = CurvaturePlan(config, scene.sizing) if config.sizing.curvature is not None else None
+        gmsh.option.setNumber('Mesh.Algorithm', 5)
+        scene = _generate_candidate(config, scene.cad, scene.sizing, curvature)
+        prepared = improve(scene.membership, scene.contract, config.improvement)
+    prepared.inspection.require_pass()
+    return scene, prepared
 
 
 def prepare_geometry(config):
@@ -94,7 +138,7 @@ def prepare_geometry(config):
     return reference, sizing, curvature
 
 
-def scene_from_current(config, reference, sizing, curvature):
+def scene_from_current(config, reference, sizing, curvature, generation_provenance=None):
     """Bind current curve/point mesh to its independently built CAD reference."""
     fixed_boundary = boundary_state()
     def geometry_check(mesh):
@@ -111,7 +155,7 @@ def scene_from_current(config, reference, sizing, curvature):
     contract = MeshContract(cad_boundary_intent(reference.components, **options), reference.sheet_signs,
                             sizing.global_size, geometry_check, sizing.local_edge_ratio,
                             curvature.deviation_ratio if curvature else None)
-    return Scene(reference, contract, fixed_boundary, sizing, curvature)
+    return Scene(reference, contract, fixed_boundary, sizing, curvature, generation_provenance)
 
 
 @contextmanager
@@ -132,35 +176,63 @@ class RunResult:
     node_count: int
     triangle_count: int
     attempts: tuple[Attempt, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
     """Reinspect the current mesh against its generation reference before output."""
     assert_current(mesh)
     scene.require_current(config)
+    metadata = provenance.require_current(scene.generation_provenance, config, scene.cad.digest)
     current = snapshot(scene.membership)
     inspect_mesh(current, scene.contract).require_pass()
-    config.output_dir.mkdir(parents=True, exist_ok=True)
     geometry = config.to_dict()['geometry']
     dimensions = '_'.join(f'{key}{geometry[key]:g}' for key in
                           ('diameter', 'length', 'thickness', 'radius', 'side', 'height')
                           if key in geometry)
     run_name = f"run_{geometry['kind']}_{dimensions}_{uuid.uuid4().hex}"
-    stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
-    final = config.output_dir / run_name
+    cache = Path(__file__).resolve().parent.parent / '.cache' / 'publication'
+    cache.mkdir(parents=True, exist_ok=True)
+    local = Path(tempfile.mkdtemp(prefix='publish-', dir=cache))
+    stage = None
+    result = None
+    error = None
+    warnings = []
     try:
-        nas.write(stage / 'mesh.nas', current, config.output_unit,
-                  geometry=geometry, length_unit=config.length_unit)
-        nas.validate(stage / 'mesh.nas', current)
+        source = local / 'mesh.nas'
+        nas.write(source, current, config.output_unit,
+                  geometry=geometry, length_unit=config.length_unit, provenance=metadata)
+        nas.validate(source, current, provenance=metadata)
+        digest = nas.file_digest(source)
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
+        target = stage / 'mesh.nas'
+        shutil.copyfile(source, target)
+        if nas.file_digest(target) != digest:
+            raise MeshBlocked('NAS 전송 검증이 일치하지 않습니다')
+        final = config.output_dir / run_name
         stage.rename(final)
-        return RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
+        result = RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
+    except BaseException as exc:
+        error = exc
     finally:
-        if stage.exists():
-            shutil.rmtree(stage)
+        for owned in (stage, local):
+            if owned is None:
+                continue
+            try:
+                if owned.exists():
+                    shutil.rmtree(owned)
+            except Exception as exc:
+                warnings.append(f'임시 폴더 정리 실패 ({owned}): {exc}')
+    if error is not None:
+        for warning in warnings:
+            error.add_note(warning)
+        raise error.with_traceback(error.__traceback__)
+    return replace(result, warnings=tuple(warnings))
+
 
 
 def run(config: Configuration) -> RunResult:
     with mesh_model(config) as scene:
-        prepared = improve(scene.membership, scene.contract, config.improvement)
-        prepared.inspection.require_pass()
+        scene, prepared = prepare_generated(scene, config)
         return replace(publish(prepared.mesh, config, scene), attempts=prepared.attempts)

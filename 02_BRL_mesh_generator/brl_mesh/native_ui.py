@@ -11,8 +11,9 @@ import threading
 
 import gmsh
 
+from . import provenance
 from .config import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder, Dihedral
-from .engine import Scene, generate, publish
+from .engine import Scene, generate, prepare_generated, publish
 from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
 from .model import snapshot
@@ -52,6 +53,7 @@ TARGET = PREFIX + '22 Target size (output unit)'
 SHEET_SIGN = PREFIX + '23 Sheet direction'
 IMPROVE = PREFIX + '30 Improve if needed'
 PASSES = PREFIX + '31 Maximum improvement passes'
+QUALITY_RETRY = PREFIX + '32 Shape-only generation retry'
 OUTPUT = PREFIX + '40 Output folder'
 APPLIED_SIZE = PREFIX + '03 Applied global size'
 CAP_ENABLED = PREFIX + 'Sizing/Use explicit size cap'
@@ -83,8 +85,9 @@ REL_TOL = PREFIX + 'Curvature/Relative tolerance'
 CURV_ITERATIONS = PREFIX + 'Curvature/Maximum regenerations'
 CURV_SAMPLING = PREFIX + 'Curvature/Sampling nodes per edge'
 CURV_VERIFY = PREFIX + 'Curvature/Verification nodes per edge'
+CURV_FEEDBACK = PREFIX + 'Curvature/Feedback'
 ACTIONS = {0: 'Idle', 1: 'Generate + publish NAS', 2: 'Generate mesh',
-           3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close'}
+           3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close', 6: 'Cancel current job'}
 SHEET_DIRECTIONS = {'Not specified': 0, 'CAD normal +': 1, 'CAD normal -': -1}
 
 
@@ -123,6 +126,8 @@ def install_controls(config: Configuration) -> None:
                    choices=list(SHEET_DIRECTIONS)),
         _parameter(IMPROVE, int(config.improvement.enabled), choices=[0, 1]),
         _parameter(PASSES, config.improvement.max_passes, min=0, step=1),
+        _parameter(QUALITY_RETRY, config.generation.quality_retry, choices=['none', 'delaunay'],
+                   help='기본 none. 생성·개선 후 AR/최소각만 실패하면 Algorithm 5로 한 번 재생성합니다.'),
         _parameter(OUTPUT, config.output_dir.as_posix()),
         _parameter(APPLIED_SIZE, 0, readOnly=True),
         _parameter(CAP_ENABLED, int(config.target_size is not None), choices=[0, 1]),
@@ -155,6 +160,7 @@ def install_controls(config: Configuration) -> None:
         _parameter(CURV_ITERATIONS, curvature.max_iterations, min=0, step=1),
         _parameter(CURV_SAMPLING, curvature.sampling_nodes, min=3, step=1),
         _parameter(CURV_VERIFY, curvature.verification_nodes, min=3, step=1),
+        _parameter(CURV_FEEDBACK, curvature.feedback, choices=['entity', 'local']),
     ]
     gmsh.onelab.set(json.dumps(parameters, ensure_ascii=False))
     update_visibility()
@@ -182,15 +188,17 @@ def update_visibility() -> None:
                   GAP_DIV: _flag(GAP_ENABLED), HOLD: not _flag(HOLD_AUTO),
                   TRANSITION: not _flag(TRANSITION_AUTO), GROWTH: _flag(TRANSITION_AUTO)}
     visibility.update({name: _flag(CURVATURE_ENABLED) for name in
-                       [ABS_ENABLED, REL_ENABLED, CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY]})
+                       [ABS_ENABLED, REL_ENABLED, CURV_ITERATIONS, CURV_SAMPLING, CURV_VERIFY, CURV_FEEDBACK]})
     visibility.update({ABS_TOL: _flag(CURVATURE_ENABLED) and _flag(ABS_ENABLED),
                        REL_TOL: _flag(CURVATURE_ENABLED) and _flag(REL_ENABLED)})
     for name, visible in visibility.items():
         # Typed values avoid Gmsh's Windows-path escaping bug in its JSON getter.
-        value = _string(name) if name in (CAD_PATH, SHEET_SIGN) else _number(name)
+        value = _string(name) if name in (CAD_PATH, SHEET_SIGN, CURV_FEEDBACK) else _number(name)
         options = {'kind': 'file'} if name == CAD_PATH else {}
         if name == SHEET_SIGN:
             options['choices'] = list(SHEET_DIRECTIONS)
+        elif name == CURV_FEEDBACK:
+            options['choices'] = ['entity', 'local']
         elif name in (SHORT_DIV, WIDTH_DIV, GAP_DIV):
             options['min'] = 1
         elif name in (ABS_ENABLED, REL_ENABLED):
@@ -288,7 +296,7 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
         else:
             local[key] = _number(control)
     if _flag(CURVATURE_ENABLED):
-        curvature = {'max_iterations': _integer(CURV_ITERATIONS), 'sampling_nodes': _integer(CURV_SAMPLING),
+        curvature = {'feedback': _string(CURV_FEEDBACK), 'max_iterations': _integer(CURV_ITERATIONS), 'sampling_nodes': _integer(CURV_SAMPLING),
                      'verification_nodes': _integer(CURV_VERIFY)}
         if _flag(ABS_ENABLED): curvature['absolute_tolerance'] = _number(ABS_TOL)
         if _flag(REL_ENABLED): curvature['relative_tolerance'] = _number(REL_TOL)
@@ -297,7 +305,8 @@ def read_controls(base: Configuration, base_dir: Path) -> Configuration:
         mesh.pop('curvature', None)
     value.update(geometry=geometry, length_unit=_string(INPUT_UNIT), output_unit=_string(OUTPUT_UNIT),
                  mesh=mesh, output_dir=_string(OUTPUT),
-                 improvement={'enabled': bool(enabled), 'max_passes': _integer(PASSES)})
+                 improvement={'enabled': bool(enabled), 'max_passes': _integer(PASSES)},
+                 generation={'quality_retry': _string(QUALITY_RETRY)})
     return Configuration.from_dict(value, base_dir)
 
 
@@ -361,7 +370,7 @@ class Controller:
             if self.scene is None:
                 return
             current = read_controls(self.base, self.base_dir)
-            if current != self.scene.cad.config:
+            if not self.scene.cad.matches_config(current):
                 raise MeshBlocked('설정이 생성 시점과 다릅니다. 다시 생성하세요')
             if not deep:
                 return
@@ -382,6 +391,7 @@ class Controller:
         if self.scene is None:
             raise MeshBlocked('현재 생성 결과가 없습니다. 먼저 Generate mesh를 실행하세요')
         self.scene.require_current(config)
+        provenance.require_current(self.scene.generation_provenance, config, self.scene.cad.digest)
         result = improve(self.scene.membership, self.scene.contract, config.improvement)
         self.last_mesh = result.mesh
         result.inspection.require_pass()
@@ -392,6 +402,9 @@ class Controller:
             raise ConfigurationError('지원하지 않는 Action입니다')
         if action == 5:
             self.close_requested = True
+            return
+        if action == 6:
+            self.status('No isolated job is running')
             return
         if action == 0:
             return
@@ -407,7 +420,8 @@ class Controller:
             gmsh.clear()  # This process owns the complete Gmsh session.
             self.scene = generate(config)
             display_mesh(fit=True)
-            mesh = self._prepare(config)
+            self.scene, prepared = prepare_generated(self.scene, config, self.status)
+            mesh = self.last_mesh = prepared.mesh
             display_mesh()
             if action == 2:
                 self.status('Mesh ready: required checks passed')
@@ -424,7 +438,8 @@ class Controller:
             mesh = snapshot(self.scene.membership)
         result = publish(mesh, config, self.scene)
         self.last_mesh = mesh
-        self.status('NAS published', str(result.nas_path))
+        warning = ''.join(f'; {item}' for item in result.warnings)
+        self.status('NAS published' + warning, str(result.nas_path))
 
     def dispatch(self) -> None:
         """Consume once; failed or idle events never repeat publication."""
@@ -449,15 +464,26 @@ class AsyncController(Controller):
     def __init__(self, base, base_dir):
         super().__init__(base, base_dir)
         self.job = None
+        self.cancel_pending = False
+        self.transfer = None
+        self.transfer_result = None
+        self.close_after_cancel = False
+        self.cancel_cause = None
 
     def perform(self, action):
         if type(action) is not int or action not in ACTIONS:
             raise ConfigurationError('지원하지 않는 Action입니다')
         if action == 5:
-            self.close_requested = True
+            self.close_after_cancel = True
+            self.cancel()
+            if self.job is None:
+                self.close_requested = True
+            return
+        if action == 6:
+            self.cancel()
             return
         if self.job is not None:
-            self.status('Working: wait for the current action, or Close to cancel')
+            self.status('Working: wait for the current action, or Cancel current job')
             return
         if action == 0:
             return
@@ -465,38 +491,150 @@ class AsyncController(Controller):
         self.invalidate_if_changed(deep=False)
         config = read_controls(self.base, self.base_dir)
         self.job = NativeJob(config, action, self.scene)
-        if action in (1, 2):
-            self.scene, self.last_mesh = None, None
         self.status('Working: starting isolated job')
+
+    def _retain_previous_if_current(self):
+        """Retain only a previously checked mesh still matching controls and Gmsh."""
+        if self.scene is None or self.last_mesh is None:
+            self.scene, self.last_mesh = None, None
+            return False
+        try:
+            from .model import assert_current
+            self.scene.require_current(read_controls(self.base, self.base_dir))
+            assert_current(self.last_mesh)
+            return True
+        except Exception:
+            self.scene, self.last_mesh = None, None
+            return False
+
+    def _close_job(self, job):
+        # Cleanup failure does not undo a published NAS or invalidate a result.
+        try:
+            job.close()
+            return ''
+        except Exception as exc:
+            return f'; temporary cleanup failed: {exc}'
+
+    def _finish_job(self, job):
+        transfer = self.transfer or getattr(job, 'transfer', None)
+        if transfer is not None and not transfer.ready():
+            self.transfer = transfer
+            transfer.cancel()
+            self.cancel_pending = True
+            self.status('Cancellation pending: NAS transfer is still stopping')
+            return False
+        cleanup_error = self._close_job(job)
+        try:
+            stopped = job.process is None or job.process.poll() is not None
+        except Exception:
+            stopped = False
+        if not stopped:
+            self.cancel_pending = True
+            self.status(gmsh.onelab.getString(STATUS)[0] +
+                        '; worker termination not confirmed; retry Cancel' + cleanup_error,
+                        gmsh.onelab.getString(NAS_PATH)[0])
+            return False
+        self.job = None
+        self.cancel_pending = False
+        if cleanup_error:
+            self.status(gmsh.onelab.getString(STATUS)[0] + cleanup_error,
+                        gmsh.onelab.getString(NAS_PATH)[0])
+        return True
 
     def poll(self):
         if self.job is None or self.close_requested:
             return
+        if self.cancel_pending:
+            if self.transfer is not None and self.transfer.ready():
+                self.cancel()
+                if self.job is None and self.close_after_cancel:
+                    self.close_requested = True
+            return
         job = self.job
+        adopting = False
+        published_path = None
         try:
-            result = job.result()
-            if result is None:
-                self.status('Working: '+job.phase())
-                return
-            if read_controls(self.base, self.base_dir) != job.config:
-                raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
-            self.scene, self.last_mesh = job.adopt(result, self.scene)
-            if job.action != 4:
-                display_mesh(fit=job.action in (1, 2))
-            path = job.commit_publication(result)
-            self.status('NAS published' if path else
-                        ('Mesh ready: required checks passed' if job.action == 2 else
-                         'Current mesh checked; improvement completed if needed'), path)
+            if self.transfer is not None:
+                if not self.transfer.ready():
+                    self.status('Working: transferring validated NAS')
+                    return
+                if read_controls(self.base, self.base_dir) != job.config:
+                    raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
+                from .model import assert_current
+                self.scene.require_current(job.config)
+                assert_current(self.last_mesh)
+                provenance.require_current(self.scene.generation_provenance, job.config, self.scene.cad.digest)
+                path = self.transfer.commit()
+                published_path = path
+                message = 'NAS published' + ''.join(f'; {item}' for item in self.transfer_result.get('warnings', ()))
+                self.status(message, path)
+                self.transfer = self.transfer_result = None
+            else:
+                result = job.result()
+                if result is None:
+                    self.status('Working: '+job.phase())
+                    return
+                if read_controls(self.base, self.base_dir) != job.config:
+                    raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
+                adopting = True  # adopt can clear or mutate the current Gmsh model.
+                self.scene, self.last_mesh = job.adopt(result, self.scene)
+                if job.action != 4:
+                    display_mesh(fit=job.action in (1, 2))
+                self.transfer = job.start_publication(result)
+                if self.transfer is not None:
+                    self.transfer_result = result
+                    self.status('Working: transferring validated NAS')
+                    return
+                message = ('Mesh ready: required checks passed' if job.action == 2 else
+                           'Current mesh checked; improvement completed if needed')
+                message += ''.join(f'; {item}' for item in result.get('warnings', ()))
+                self.status(message)
         except Exception as exc:
-            self.scene, self.last_mesh = None, None
-            self.status(f'Blocked: {exc}; 이번 실행 NAS 없음')
-        job.close()
-        self.job = None
+            warning = ''
+            if self.transfer is not None and not self.transfer.ready():
+                self.transfer.cancel()
+                self.cancel_pending = True
+                self.cancel_cause = str(exc)
+                if adopting:
+                    self.scene, self.last_mesh = None, None
+                self.status(f'Blocked: {exc}; NAS transfer cancellation pending')
+                return
+            if self.transfer is not None:
+                self.transfer.cleanup()
+                warning = self.transfer.warning
+                self.transfer = self.transfer_result = None
+            if adopting:
+                self.scene, self.last_mesh = None, None
+            else:
+                self._retain_previous_if_current()
+            if published_path is not None:
+                self.status(f'NAS published; completion warning: {exc}' + (f'; {warning}' if warning else ''), published_path)
+            else:
+                self.status(f'Blocked: {exc}; 이번 실행 NAS 없음' + (f'; {warning}' if warning else ''))
+        self._finish_job(job)
 
     def cancel(self):
-        if self.job is not None:
-            self.job.close()
-            self.job = None
+        if self.job is None:
+            return
+        if self.transfer is not None:
+            self.transfer.cancel()
+            if not self.transfer.ready():
+                self.cancel_pending = True
+                self.status('Cancellation pending: NAS transfer is still stopping')
+                return
+            self.transfer.cleanup()
+            warning = self.transfer.warning
+            self.transfer = self.transfer_result = None
+        else:
+            warning = ''
+        job = self.job
+        retained = self._retain_previous_if_current()
+        message = (f'Blocked: {self.cancel_cause}; 이번 실행 NAS 없음' if self.cancel_cause else
+                   ('Cancelled; previous mesh retained' if retained else 'Cancelled; regenerate required'))
+        self.cancel_cause = None
+        self.status(message + (f'; {warning}' if warning else ''))
+        self._finish_job(job)
+
 
 
 def launch(config: Configuration, base_dir: Path) -> None:
@@ -530,9 +668,20 @@ def launch(config: Configuration, base_dir: Path) -> None:
                 gmsh.fltk.update()
                 controller.ui_dirty = False
     finally:
-        if controller is not None and hasattr(controller, 'cancel'):
-            controller.cancel()
-        gmsh.finalize()
+        try:
+            if controller is not None and hasattr(controller, 'cancel'):
+                controller.cancel()
+                if controller.job is not None:
+                    process = controller.job.process
+                    message = (f'worker termination not confirmed (pid={getattr(process, "pid", "unknown")}): '
+                               + gmsh.onelab.getString(STATUS)[0])
+                    active_error = sys.exc_info()[1]
+                    if active_error is not None:
+                        active_error.add_note(message)
+                    else:
+                        raise RuntimeError(message)
+        finally:
+            gmsh.finalize()
 
 
 def main(argv=None) -> int:
@@ -544,7 +693,7 @@ def main(argv=None) -> int:
         launch(Configuration.load(source), source.parent)
         return 0
     except Exception as exc:
-        print(str(exc), file=sys.stderr)
+        print('; '.join([str(exc), *getattr(exc, '__notes__', ())]), file=sys.stderr)
         return 1
 
 

@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import gmsh
 import numpy as np
@@ -75,6 +76,27 @@ def test_curvature_controls_roundtrip_and_invalidation(config):
         gmsh.onelab.setNumber(ui.CURVATURE_ENABLED, [0])
         assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature is None
         assert not configured.output_dir.exists()
+    finally:
+        gmsh.finalize()
+
+
+def test_curvature_feedback_control_roundtrip_and_visibility(config):
+    from brl_mesh.sizing_config import Curvature
+    configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(absolute_tolerance=.01)))
+    gmsh.initialize(readConfigFiles=False)
+    try:
+        gmsh.option.setNumber('General.Terminal', 0)
+        ui.install_controls(configured)
+        ui.update_visibility()
+        definition = json.loads(gmsh.onelab.get(ui.CURV_FEEDBACK))
+        assert definition['visible'] and definition['choices'] == ['entity', 'local']
+        assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature.feedback == 'entity'
+        gmsh.onelab.setString(ui.CURV_FEEDBACK, ['local'])
+        assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature.feedback == 'local'
+        gmsh.onelab.setNumber(ui.CURVATURE_ENABLED, [0])
+        ui.update_visibility()
+        assert not json.loads(gmsh.onelab.get(ui.CURV_FEEDBACK))['visible']
+        assert ui.read_controls(configured, configured.output_dir.parent).sizing.curvature is None
     finally:
         gmsh.finalize()
 
@@ -312,3 +334,38 @@ def test_advanced_json_local_selection_survives_native_read(config):
         control=ui.Controller(base,config.output_dir.parent)
         assert ui.read_controls(base,config.output_dir.parent)==base
     finally:gmsh.finalize()
+
+
+def test_output_directory_change_retains_scene_and_publishes(controller, config, tmp_path):
+    assert 'ready' in action(controller, 2)
+    scene = controller.scene
+    target = tmp_path / 'new-output'
+    gmsh.onelab.setString(ui.OUTPUT, [target.as_posix()])
+    controller.invalidate_if_changed()
+    assert controller.scene is scene
+    assert action(controller, 4) == 'NAS published'
+    assert Path(gmsh.onelab.getString(ui.NAS_PATH)[0]).parent.parent == target
+
+
+def test_window_close_with_unstopped_worker_reports_pid(config, monkeypatch):
+    from types import SimpleNamespace
+    process = SimpleNamespace(pid=4321)
+    class Unstoppable:
+        def __init__(self, *args):
+            self.job = SimpleNamespace(process=process)
+            self.close_requested = False
+        def cancel(self):
+            pass
+    finalized = []
+    monkeypatch.setattr(ui, 'AsyncController', Unstoppable)
+    monkeypatch.setattr(gmsh, 'isInitialized', lambda: False)
+    monkeypatch.setattr(gmsh, 'initialize', lambda **kwargs: None)
+    monkeypatch.setattr(gmsh, 'finalize', lambda: finalized.append(True))
+    monkeypatch.setattr(gmsh.option, 'setNumber', lambda *args: None)
+    monkeypatch.setattr(gmsh.fltk, 'initialize', lambda: None)
+    monkeypatch.setattr(gmsh.fltk, 'openTreeItem', lambda *args: None)
+    monkeypatch.setattr(gmsh.fltk, 'isAvailable', lambda: False)
+    monkeypatch.setattr(gmsh.onelab, 'getString', lambda *args: ['termination denied'])
+    with pytest.raises(RuntimeError, match='pid=4321.*termination denied'):
+        ui.launch(config, config.output_dir.parent)
+    assert finalized == [True]

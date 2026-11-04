@@ -90,6 +90,15 @@ class Improvement:
 
 
 @dataclass(frozen=True)
+class Generation:
+    quality_retry: str = 'none'
+
+    def __post_init__(self):
+        if type(self.quality_retry) is not str or self.quality_retry not in ('none', 'delaunay'):
+            raise ConfigurationError('generation.quality_retry: none 또는 delaunay가 필요합니다')
+
+
+@dataclass(frozen=True)
 class Configuration:
     geometry: Plate | Ogive | Sphere | Cube | Cylinder | Dihedral | CadFile
     length_unit: str
@@ -98,6 +107,7 @@ class Configuration:
     output_dir: Path
     improvement: Improvement = Improvement()
     sizing: Sizing = Sizing()
+    generation: Generation = Generation()
 
     @property
     def unit_scale(self) -> float:
@@ -128,19 +138,27 @@ class Configuration:
         result = {'schema_version': 1, 'geometry': value, 'length_unit': self.length_unit,
                 'output_unit': self.output_unit, 'mesh': self.sizing.to_dict(self.target_size),
                 'improvement': {'enabled': self.improvement.enabled, 'max_passes': self.improvement.max_passes},
-                'output_dir': str(self.output_dir)}
+                'output_dir': str(self.output_dir),
+                'generation': {'quality_retry': self.generation.quality_retry}}
         return result
 
     @classmethod
     def from_dict(cls, value: object, base_dir: Path | None = None) -> Configuration:
-        root = _object(value, {"schema_version", "geometry", "length_unit", "output_unit", "mesh", "output_dir", "improvement"},
+        return cls._from_dict(value, base_dir, check_cad_file=True)
+
+    @classmethod
+    def _from_dict(cls, value: object, base_dir: Path | None = None, *,
+                   check_cad_file: bool) -> Configuration:
+        root = _object(value, {"schema_version", "geometry", "length_unit", "output_unit", "mesh", "output_dir", "improvement", "generation"},
                        {"schema_version", "geometry", "mesh"}, "configuration")
         if type(root["schema_version"]) is not int or root["schema_version"] != 1:
             raise ConfigurationError("schema_version: 현재 지원하는 버전은 정수 1입니다")
-        geometry = _geometry(root['geometry'], base_dir or Path.cwd())
+        geometry = _geometry(root['geometry'], base_dir or Path.cwd(), check_source=check_cad_file)
         target, sizing = parse_sizing(root['mesh'])
         improvement = _object(root.get('improvement', {}), {'enabled', 'max_passes'}, set(), 'improvement')
         enabled, passes = improvement.get('enabled', True), improvement.get('max_passes', 3)
+        generation = _object(root.get('generation', {}), {'quality_retry'}, set(), 'generation')
+        generation = Generation(generation.get('quality_retry', 'none'))
         output = root.get("output_dir", "outputs")
         if not isinstance(output, str) or not output.strip():
             raise ConfigurationError("output_dir: 비어 있지 않은 경로 문자열이 필요합니다")
@@ -149,7 +167,7 @@ class Configuration:
             output_path = (base_dir or Path.cwd()) / output_path
         config = cls(geometry, _unit(root.get("length_unit", "mm"), "length_unit"),
                      _unit(root.get("output_unit", "mm"), "output_unit"),
-                     target, output_path.resolve(), Improvement(enabled, passes), sizing)
+                     target, output_path.resolve(), Improvement(enabled, passes), sizing, generation)
         if isinstance(geometry, Plate):
             scaled = [geometry.length * config.unit_scale, geometry.width * config.unit_scale,
                       *(x * config.unit_scale for x in geometry.origin)]
@@ -194,7 +212,7 @@ def _origin(value):
     return tuple(_number(x, 'geometry.origin') for x in origin)
 
 
-def _geometry(value: object, base: Path) -> Plate | Ogive | Sphere | Cube | Cylinder | Dihedral | CadFile:
+def _geometry(value: object, base: Path, *, check_source: bool = True) -> Plate | Ogive | Sphere | Cube | Cylinder | Dihedral | CadFile:
     if not isinstance(value, dict):
         raise ConfigurationError('geometry: object가 필요합니다')
     if value.get('kind') == 'plate':
@@ -235,7 +253,7 @@ def _geometry(value: object, base: Path) -> Plate | Ogive | Sphere | Cube | Cyli
     if not isinstance(path, str) or not path.strip():
         raise ConfigurationError('geometry.path: CAD 경로 문자열이 필요합니다')
     source = (base / path).resolve()
-    if source.suffix.lower() not in {'.step', '.stp', '.iges', '.igs', '.brep'} or not source.is_file():
+    if source.suffix.lower() not in {'.step', '.stp', '.iges', '.igs', '.brep'} or (check_source and not source.is_file()):
         raise ConfigurationError('geometry.path: 존재하는 STEP/IGES/BREP 파일이 필요합니다')
     default = _sign(geometry['sheet_normal'], 'sheet_normal') if 'sheet_normal' in geometry else None
     normals = geometry.get('sheet_normals', {})

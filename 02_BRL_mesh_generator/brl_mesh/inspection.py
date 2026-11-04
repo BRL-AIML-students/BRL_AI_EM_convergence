@@ -7,11 +7,11 @@ from typing import Callable
 import gmsh
 import numpy as np
 
-from .checks import ShapeValues, measure_shape
+from .checks import ShapeValues, _measure_shape
 from .errors import MeshBlocked
 from .model import SurfaceMesh, assert_current
-from .normals import NormalValues, inspect_normals
-from .preservation import GeometryValues, measure_geometry
+from .normals import NormalValues, _inspect_normals
+from .preservation import GeometryValues, _measure_geometry
 from .quality import read_icn
 from .topology import BoundaryIntent, TopologyValues, inspect_topology
 from .validation import Issue, require_pass
@@ -73,10 +73,17 @@ def cad_boundary_intent(expected_components: int, **kwargs) -> BoundaryIntent:
 def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
     mesh.validate()
     assert_current(mesh)
-    shape = measure_shape(mesh)
+    # Private, per-call arrays: no cached verdict survives mutable input edits.
+    # Helpers receive read-only arrays after this public entry's validation.
+    xyz = mesh.triangles()
+    cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
+    magnitude = np.linalg.norm(cross, axis=1)
+    for array in (xyz, cross, magnitude):
+        array.setflags(write=False)
+    shape = _measure_shape(xyz)
     topology = inspect_topology(mesh, contract.boundary)
-    normals = inspect_normals(mesh, contract.sheet_signs)
-    geometry = measure_geometry(mesh)
+    normals = _inspect_normals(mesh, contract.sheet_signs, xyz, cross, magnitude)
+    geometry = _measure_geometry(mesh, xyz, cross, magnitude)
     issues = list(topology.issues + normals.issues + geometry.issues)
     if not np.isfinite(contract.target_size) or contract.target_size <= 0:
         issues.append(Issue('invalid_target', '목표 길이가 유효하지 않습니다', 'incomplete'))
@@ -113,7 +120,6 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
                 issues.append(Issue('element_validity', 'Plugin ICN이 양의 유효 값을 반환하지 않았습니다'))
         except Exception as exc:
             issues.append(Issue('quality_incomplete', str(exc), 'incomplete'))
-    xyz = mesh.triangles()
     longest = max(float(np.linalg.norm(xyz[:, (i + 1) % 3] - xyz[:, i], axis=1).max()) for i in range(3))
     ratio = longest / contract.target_size if np.isfinite(contract.target_size) and contract.target_size > 0 else float('inf')
     noise = 64 * np.finfo(float).eps * max(float(np.max(np.abs(mesh.coordinates))), longest)

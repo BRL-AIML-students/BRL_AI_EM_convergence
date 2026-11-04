@@ -35,7 +35,7 @@ def test_failed_independent_validation_preserves_prior_output_and_cleans_stage(c
     old_file.parent.mkdir(parents=True)
     old_file.write_text('previous result', encoding='ascii')
     called = []
-    def fail(*_):
+    def fail(*_, **kwargs):
         called.append(True)
         raise MeshBlocked('independent reader failure')
     monkeypatch.setattr(nas, 'validate', fail)
@@ -77,3 +77,48 @@ def test_cli_disabled_improvement_still_blocks_bad_shape(tmp_path):
     assert result.returncode == 2 and not result.stdout
     assert json.loads(result.stderr)['status'] == 'blocked'
     assert not (tmp_path / 'blocked-output').exists()
+
+
+def test_output_directory_change_rechecks_and_publishes_existing_mesh(config, tmp_path):
+    with engine.mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        changed = replace(config, output_dir=tmp_path / 'other')
+        result = engine.publish(mesh, changed, scene)
+        assert result.nas_path.is_file()
+        assert result.nas_path.parent.parent == changed.output_dir
+        with pytest.raises(MeshBlocked, match='설정이 생성'):
+            scene.require_current(replace(changed, output_unit='m'))
+
+
+def test_cli_forwards_only_warning_to_stderr_without_changing_json(monkeypatch, capsys):
+    from types import SimpleNamespace
+    from brl_mesh import __main__ as cli
+    payload = cli.PROTOCOL + json.dumps({'status': 'ok', 'nas_path': 'result.nas'})
+    warning = cli.WARNING + json.dumps('cleanup failed')
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(stdout=payload, stderr=warning, returncode=0))
+    assert cli.main(['input.json']) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out) == {'status': 'ok', 'nas_path': 'result.nas'}
+    assert 'cleanup failed' in output.err
+
+
+def test_publish_blocks_if_generation_code_hash_changes(config, monkeypatch):
+    with engine.mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        monkeypatch.setattr(engine.provenance, 'source_hash', lambda: '0' * 64)
+        with pytest.raises(MeshBlocked, match='provenance'):
+            engine.publish(mesh, config, scene)
+    assert not config.output_dir.exists()
+
+
+def test_provenance_does_not_change_mesh_cards(config, tmp_path):
+    with engine.mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        bare = tmp_path / 'bare.nas'
+        nas.write(bare, mesh, config.output_unit)
+        published = engine.publish(mesh, config, scene).nas_path
+        cards = lambda path: [line for line in path.read_text(encoding='ascii').splitlines()
+                              if line and not line.startswith('$')]
+        assert cards(bare) == cards(published)
+        assert json.loads(scene.generation_provenance)['cad_source_sha256'] is None
