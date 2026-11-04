@@ -180,6 +180,8 @@ class CurvaturePlan:
         self.iterations = 0
         self.history = []
         self.verified = None
+        self._patches = {}
+        self._feedback = None
         self.faces = {tag for _, tag in gmsh.model.getEntities(2)}
         curve_faces = {}
         for face in sorted(self.faces):
@@ -240,7 +242,8 @@ class CurvaturePlan:
         # The finite absolute-resolution branch at a pole is not multiplied
         # towards zero. Refine the curvature estimate above that resolution.
         delta = min(required, self.tolerances[dim, tag])
-        scale = self.scales[dim, tag]
+        scale = self.scales[dim, tag] * (self._local_scale(tag, point)
+                                        if dim == 2 and self.settings.feedback == 'local' else 1.)
         applied = required if scale == 1. else delta + (required-delta)*scale
         old = self.requests.get((dim, tag), CurvatureRequest(self.cap, self.cap, 0))
         divisions = (circle_divisions(1/k, self.tolerances[dim, tag])
@@ -252,6 +255,26 @@ class CurvaturePlan:
             raise MeshBlocked(f'curvature_minimum_conflict: required={required:g}, applied={applied:g}, '
                               f'minimum_size={self.floor:g}; 요구를 clamp하지 않습니다')
         return applied
+
+    def _local_scale(self, tag, point):
+        """Compact smooth requests; each feedback iteration further reduces size.
+
+        Patches within an iteration combine by min, avoiding multiplication for
+        overlapping neighboring elements. Iterations multiply, so a repeated
+        violation at the same location cannot stall at its previous factor.
+        """
+        scale = 1.
+        for centers, radii, factors in self._patches.get(tag, ()):
+            q = np.linalg.norm(centers-np.asarray(point), axis=1)/radii
+            inside = q < 1
+            if np.any(inside):
+                # Keep a full reduction across the element and its immediate
+                # neighborhood (2 diameters), then blend to 4 diameters. New
+                # triangles can move the sampled maximum beyond the old one.
+                t = np.maximum(2*q[inside]-1, 0)
+                weight = (1-t)**4*(4*t+1)
+                scale *= float(np.min(1-(1-factors[inside])*weight))
+        return scale
 
     def target(self, dim, tag, point):
         result = self.size(dim, tag, point) if dim in (1, 2) else self.cap
@@ -285,12 +308,13 @@ class CurvaturePlan:
             raise MeshBlocked(f'curvature_callback_incomplete: {self.failure}') from self.failure
 
     def measure(self, mesh, sampling=None):
+        self._feedback = None
         assert_current(mesh)
         n = sampling or self.settings.verification_nodes
         weights = np.array([(1-i/(n-1)-j/(n-1), i/(n-1), j/(n-1))
                             for i in range(n) for j in range(n-i)])
         line_weights = np.linspace(0, 1, n)
-        result, ratios = [], []
+        result, ratios, feedback = [], [], []
         for dim, tag in sorted(self.tolerances):
             if dim == 2:
                 indices = np.flatnonzero(mesh.surface_tags == tag)
@@ -315,13 +339,31 @@ class CurvaturePlan:
                 batch = xyz[start:start+128]
                 samples = (np.einsum('ij,ejk->eik', weights, batch) if dim == 2 else
                            batch[:, :1]+line_weights[None, :, None]*(batch[:, 1:]-batch[:, :1]))
-                projected, _ = project(dim, tag, samples.reshape(-1, 3))
-                distances = np.linalg.norm(projected-samples.reshape(-1, 3), axis=1).reshape(samples.shape[:2])
+                # Keep every original sample, including its floating-point
+                # coordinates. Only exact duplicates on this CAD entity share
+                # a validated projection; inverse restores each element's rows.
+                # Retain bounded batches rather than materializing a full face's
+                # verification grid in memory.
+                unique, inverse = np.unique(samples.reshape(-1, 3), axis=0, return_inverse=True)
+                projected, _ = project(dim, tag, unique)
+                unique_distances = np.linalg.norm(projected-unique, axis=1)
+                distances = unique_distances[inverse].reshape(samples.shape[:2])
                 maxima = distances.max(axis=1)
+                if dim == 2 and self.settings.feedback == 'local':
+                    bad = np.flatnonzero(maxima/self.tolerances[dim, tag] > 1+1e-10)
+                    if len(bad):
+                        argmax = distances[bad].argmax(axis=1)
+                        seeds = projected[inverse.reshape(samples.shape[:2])[bad, argmax]]
+                        diameters = np.max(np.linalg.norm(batch[:, [1, 2, 0]]-batch, axis=2), axis=1)
+                        feedback.extend((tag, tuple(center), 4*float(diameters[i]),
+                                         min(.7, .7/math.sqrt(maxima[i]/self.tolerances[dim, tag])))
+                                        for i, center in zip(bad, seeds))
                 entity_max = max(entity_max, float(maxima.max()))
                 result.extend((dim, tag, int(e), float(v)) for e, v in zip(ids[start:start+128], maxima))
             ratios.append(((dim, tag), entity_max/self.tolerances[dim, tag]))
         deviation = Deviation(tuple(result), tuple(ratios))
+        self._feedback = ((deviation, mesh, tuple(feedback), _measurement_key(mesh))
+                          if deviation.ratio > 1+1e-10 else None)
         if n == self.settings.verification_nodes:
             self.verified = (_measurement_key(mesh), deviation.ratio)
         return deviation
@@ -330,9 +372,35 @@ class CurvaturePlan:
         if self.iterations >= self.settings.max_iterations:
             raise MeshBlocked(f'curvature_iteration_limit: sampled deviation ratio={deviation.ratio:g}, '
                               f'재생성 {self.iterations}/{self.settings.max_iterations}')
+        if self._feedback is None or self._feedback[0] is not deviation:
+            raise MeshBlocked('curvature_feedback_incomplete: 현재 측정의 feedback이 없습니다')
+        assert_current(self._feedback[1])
+        if _measurement_key(self._feedback[1]) != self._feedback[3]:
+            raise MeshBlocked('curvature_feedback_incomplete: 측정 후 CAD/경계가 변경됐습니다')
+        grouped = {}
+        for tag, center, radius, factor in self._feedback[2]:
+            if not math.isfinite(radius) or radius <= 0 or not 0 < factor < 1 or not np.isfinite(center).all():
+                raise MeshBlocked('curvature_feedback_incomplete: 국소 feedback이 유효하지 않습니다')
+            grouped.setdefault(tag, []).append((*center, radius, factor))
+        if any(key not in self.scales or (self.settings.feedback == 'local' and
+                                        key[0] == 2 and key[1] not in grouped)
+               for key, ratio in deviation.entity_ratios if ratio > 1+1e-10):
+            raise MeshBlocked('curvature_feedback_incomplete: 위반 entity의 위치가 없습니다')
+        patches = {}
+        for tag, values in grouped.items():
+            data = np.unique(np.asarray(values, dtype=float), axis=0)
+            arrays = (data[:, :3].copy(), data[:, 3].copy(), data[:, 4].copy())
+            for array in arrays:
+                array.setflags(write=False)
+            patches[tag] = arrays
+        for tag, arrays in patches.items():
+            self._patches.setdefault(tag, []).append(arrays)
         for key, ratio in deviation.entity_ratios:
             if ratio > 1+1e-10:
-                self.scales[key] *= min(.7, .7/math.sqrt(ratio))
+                if key[0] == 1 or self.settings.feedback == 'entity':
+                    self.scales[key] *= min(.7, .7/math.sqrt(ratio))
+        self._feedback = None
+        self.verified = None
         self.iterations += 1
 
     def deviation_ratio(self, mesh):

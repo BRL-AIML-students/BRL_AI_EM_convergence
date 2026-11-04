@@ -18,7 +18,12 @@ class GeometryValues:
 def measure_geometry(mesh: SurfaceMesh) -> GeometryValues:
     xyz = mesh.triangles()
     cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
-    areas = np.linalg.norm(cross, axis=1) / 2
+    return _measure_geometry(mesh, xyz, cross, np.linalg.norm(cross, axis=1))
+
+
+def _measure_geometry(mesh, xyz, cross, magnitude):
+    """Internal area/volume calculation sharing transaction-local triangles."""
+    areas = magnitude / 2
     errors, volumes = [], []
     try:
         for surface in sorted(set(map(int, mesh.surface_tags))):

@@ -88,10 +88,29 @@ def test_maximum_passes_are_bounded_when_nothing_improves(config, monkeypatch):
         calls = []
         monkeypatch.setattr(gmsh.model.mesh, 'optimize', lambda method, **kwargs: calls.append(method))
         result = improve(membership, scene.contract, Improvement(True, 3))
-        assert len(calls) == 3 and len(result.attempts) == 3
+        assert calls == ['Relocate2D', 'Laplace2D']
+        assert len(result.attempts) == 2
         assert all(a.rolled_back for a in result.attempts)
         with pytest.raises(MeshBlocked):
             result.inspection.require_pass()
+
+
+def test_rejected_method_can_retry_after_an_accepted_coordinate_change(config, monkeypatch):
+    with mesh_model(config) as scene:
+        node, original, target = distort_interior(scene.membership)
+        calls = []
+        def partial_move(method, **kwargs):
+            calls.append(method)
+            if len(calls) == 2:
+                point = original+.8*(target-original)
+                face = next(iter(scene.membership))
+                gmsh.model.mesh.setNode(node, point.tolist(),
+                    gmsh.model.getParametrization(2, face, point.tolist()).tolist())
+        monkeypatch.setattr(gmsh.model.mesh, 'optimize', partial_move)
+        result = improve(scene.membership, scene.contract, Improvement(True, 5))
+        assert calls == ['Relocate2D', 'Laplace2D', 'Relocate2D', 'Laplace2D']
+        assert [a.accepted for a in result.attempts] == [False, True, False, False]
+        assert result.inspection.shape.violating_count > 0
 
 
 @pytest.mark.parametrize('damage', ['worse', 'degenerate', 'off_cad', 'fixed_node'])

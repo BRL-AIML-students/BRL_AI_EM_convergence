@@ -59,6 +59,7 @@ class Curvature:
     max_iterations: int = 3
     sampling_nodes: int = 10
     verification_nodes: int = 19
+    feedback: str = 'entity'
 
 
 @dataclass(frozen=True)
@@ -180,7 +181,10 @@ def parse_sizing(value):
         verification = integer(data.get('verification_nodes', 19), 'verification_nodes', 3)
         if verification < sampling:
             raise ConfigurationError('verification_nodes: sampling_nodes 이상이어야 합니다')
+        feedback = data.get('feedback', 'entity')
+        if type(feedback) is not str or feedback not in ('entity', 'local'):
+            raise ConfigurationError('curvature.feedback: entity 또는 local이 필요합니다')
         curvature = Curvature(**tolerances,
                               max_iterations=integer(data.get('max_iterations', 3), 'max_iterations', 0),
-                              sampling_nodes=sampling, verification_nodes=verification)
+                              sampling_nodes=sampling, verification_nodes=verification, feedback=feedback)
     return target, Sizing(wave, fraction, floor, settings, curvature)

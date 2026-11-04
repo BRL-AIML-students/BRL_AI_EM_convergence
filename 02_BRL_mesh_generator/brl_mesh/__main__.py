@@ -10,17 +10,24 @@ from .config import Configuration
 from .errors import ConfigurationError, MeshBlocked
 
 PROTOCOL = 'BRL_RESULT '
+WARNING = 'BRL_WARNING '
+
+
+def error_message(exc):
+    return '; '.join([str(exc), *getattr(exc, '__notes__', ())])
 
 
 def execute(configuration: str) -> tuple[int, dict]:
     try:
         from .engine import run
         result = run(Configuration.load(configuration))
+        for warning in result.warnings:
+            print(WARNING + json.dumps(warning, ensure_ascii=False), file=sys.stderr)
         return 0, {'status': 'ok', 'nas_path': str(result.nas_path)}
     except MeshBlocked as exc:
-        return 2, {'status': 'blocked', 'reason': str(exc)}
+        return 2, {'status': 'blocked', 'reason': error_message(exc)}
     except Exception as exc:
-        return 1, {'status': 'error', 'reason': str(exc)}
+        return 1, {'status': 'error', 'reason': error_message(exc)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,12 +49,16 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(f'Gmsh 실행 프로세스가 완료 상태를 반환하지 않았습니다 (exit={completed.returncode})')
         state = json.loads(payloads[0])
         code = completed.returncode
+        if code == 0:
+            for line in completed.stderr.splitlines():
+                if line.startswith(WARNING):
+                    print(json.loads(line[len(WARNING):]), file=sys.stderr)
         expected = 'ok' if code == 0 else ('error' if code == 1 else 'blocked')
         if (not isinstance(state, dict) or state.get('status') != expected or
                 set(state) != {'status', 'nas_path' if code == 0 else 'reason'}):
             raise RuntimeError('실행 프로세스의 완료 상태가 유효하지 않습니다')
     except Exception as exc:
-        code, state = 1, {'status': 'error', 'reason': str(exc)}
+        code, state = 1, {'status': 'error', 'reason': error_message(exc)}
     print(json.dumps(state, ensure_ascii=False), file=sys.stdout if code == 0 else sys.stderr)
     return code
 

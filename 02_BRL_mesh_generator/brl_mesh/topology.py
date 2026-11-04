@@ -1,7 +1,4 @@
-"""Connectivity and local node/edge conformity, independently of shape quality.
-
-Vertex/edge auditing does not certify absence of arbitrary face intersections.
-"""
+"""Connectivity, node/edge conformity and triangle interior intersections."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -9,6 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .intersections import intersection_issues
 from .model import SurfaceMesh
 from .validation import Issue
 
@@ -180,4 +178,5 @@ def inspect_topology(mesh: SurfaceMesh, intent: BoundaryIntent) -> TopologyValue
                                'blocked' if distance <= exact[ei] else 'incomplete'))
     for code, status in sorted(codes):
         issues.append(Issue(code, '공유되지 않은 node/edge 관계 또는 불확실한 근접 관계가 있습니다', status))
+    issues.extend(intersection_issues(xyz, mesh.connectivity, mesh.element_ids))
     return TopologyValues(tuple(issues), count, boundary, adjacent_ratio)

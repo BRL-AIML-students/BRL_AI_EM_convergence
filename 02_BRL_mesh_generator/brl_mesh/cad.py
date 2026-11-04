@@ -1,7 +1,7 @@
 """CAD ownership, single unit conversion and immutable generation references."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 
 import gmsh
@@ -90,8 +90,11 @@ class CadReference:
     signature: tuple
     digest: str | None
 
+    def matches_config(self, config: Configuration) -> bool:
+        return replace(config, output_dir=self.config.output_dir) == self.config
+
     def require_current(self, config: Configuration) -> None:
-        if config != self.config:
+        if not self.matches_config(config):
             raise MeshBlocked('설정이 생성 시점과 다릅니다. 다시 생성하세요')
         try:
             if source_digest(config) != self.digest:

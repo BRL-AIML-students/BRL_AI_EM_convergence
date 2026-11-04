@@ -1,9 +1,13 @@
 from dataclasses import replace
 
 import gmsh
+import numpy as np
 import pytest
 
 from brl_mesh.engine import mesh_model, publish
+from brl_mesh.checks import measure_shape
+from brl_mesh.normals import inspect_normals
+from brl_mesh.preservation import measure_geometry
 from brl_mesh.errors import MeshBlocked
 from brl_mesh.inspection import MeshContract, cad_boundary_intent, inspect_mesh
 from brl_mesh.model import snapshot
@@ -57,3 +61,46 @@ def test_full_closed_solid_contract(kind):
         if kind == 'box':
             assert result.geometry.area_relative_error_max < 1e-12
             assert result.geometry.volume_relative_error_max < 1e-12
+
+
+def test_shared_triangle_calculation_matches_standalone_measurements(config):
+    with mesh_model(config) as scene:
+        mesh=snapshot(scene.membership)
+        expected_shape=measure_shape(mesh)
+        expected_normals=inspect_normals(mesh,scene.contract.sheet_signs)
+        expected_geometry=measure_geometry(mesh)
+        actual=inspect_mesh(mesh,scene.contract)
+        np.testing.assert_array_equal(actual.shape.aspect_ratios,expected_shape.aspect_ratios)
+        np.testing.assert_array_equal(actual.shape.minimum_angles,expected_shape.minimum_angles)
+        assert actual.normals==expected_normals
+        assert actual.geometry==expected_geometry
+
+
+def test_inspection_does_not_reuse_arrays_after_input_mutation(config):
+    with mesh_model(config) as scene:
+        mesh=snapshot(scene.membership)
+        before=inspect_mesh(mesh,scene.contract)
+        node=int(gmsh.model.mesh.getNodes(2,next(iter(scene.membership)))[0][0])
+        index=int(np.searchsorted(mesh.node_ids,node))
+        mesh.coordinates[index,0]+=.001
+        with pytest.raises(MeshBlocked,match='snapshot'):
+            inspect_mesh(mesh,scene.contract)
+        point=mesh.coordinates[index]
+        gmsh.model.mesh.setNode(node,point.tolist(),
+            gmsh.model.getParametrization(2,next(iter(scene.membership)),point.tolist()).tolist())
+        after=inspect_mesh(mesh,scene.contract)
+        assert not np.array_equal(before.shape.aspect_ratios,after.shape.aspect_ratios)
+        np.testing.assert_array_equal(after.shape.aspect_ratios,measure_shape(mesh).aspect_ratios)
+
+
+def test_quality_rechecks_current_mesh_after_contract_callback(config,monkeypatch):
+    with mesh_model(config) as scene:
+        mesh=snapshot(scene.membership)
+        node=int(gmsh.model.mesh.getNodes(2,next(iter(scene.membership)))[0][0])
+        point=mesh.coordinates[np.searchsorted(mesh.node_ids,node)]+[.001,0,0]
+        def mutate(_):
+            gmsh.model.mesh.setNode(node,point.tolist(),[])
+        monkeypatch.setattr(gmsh.plugin,'run',lambda *_:pytest.fail('must reject stale snapshot before ICN'))
+        result=inspect_mesh(mesh,replace(scene.contract,geometry_check=mutate))
+        assert [issue.code for issue in result.issues]==['quality_incomplete']
+        assert 'snapshot' in result.issues[0].message

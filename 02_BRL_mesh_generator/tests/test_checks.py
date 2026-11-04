@@ -3,7 +3,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from brl_mesh.checks import check_plate_geometry, check_shape
+from brl_mesh.checks import check_plate_geometry, check_shape, measure_shape
 from brl_mesh.errors import MeshBlocked
 from brl_mesh.topology import BoundaryIntent, inspect_topology
 
@@ -57,5 +57,45 @@ def test_geometry_does_not_stand_in_for_normal_direction(square, config):
 def test_skinny_triangle_does_not_bypass_existing_policy(square):
     xyz = square.coordinates.copy()
     xyz[:, 1] *= 0.01
-    with pytest.raises(MeshBlocked, match='AR'):
+    with pytest.raises(MeshBlocked, match=r'AR=.*최소각=.*위반 요소=2'):
         check_shape(replace(square, coordinates=xyz))
+
+
+@pytest.mark.parametrize('separation', [10., 1e12])
+def test_shape_uses_each_triangle_scale_despite_distant_components(square, separation):
+    triangle = np.array([[0., 0., 0.], [1., 0., 0.], [.5, np.sqrt(3)/2, 0.]])
+    mesh = replace(square, node_ids=np.arange(1, 7),
+                   coordinates=np.vstack([triangle, triangle+[separation, 0, 0]]),
+                   connectivity=np.array([[1, 2, 3], [4, 5, 6]]))
+    result = check_shape(mesh)
+    assert result.aspect_ratios == pytest.approx([1., 1.])
+    assert result.minimum_angles == pytest.approx([60., 60.])
+
+
+def test_local_shape_matches_previous_formula_on_resolved_triangles(square):
+    xyz = square.coordinates.copy()
+    xyz[2] = [.8, 1.1, .3]
+    mesh = replace(square, coordinates=xyz)
+    triangles = mesh.triangles()
+    triangles = (triangles-triangles[:, :1])/np.max(np.ptp(xyz, axis=0))
+    edges = np.stack([triangles[:, (i+1) % 3]-triangles[:, i] for i in range(3)], axis=1)
+    lengths = np.linalg.norm(edges, axis=2)
+    area = np.linalg.norm(np.cross(triangles[:, 1], triangles[:, 2]), axis=1)/2
+    aspect = lengths.max(axis=1)*lengths.sum(axis=1)/(4*np.sqrt(3)*area)
+    angles = []
+    for i in range(3):
+        a = triangles[:, (i+1) % 3]-triangles[:, i]
+        b = triangles[:, (i+2) % 3]-triangles[:, i]
+        angles.append(np.degrees(np.arctan2(np.linalg.norm(np.cross(a, b), axis=1),
+                                          np.einsum('ij,ij->i', a, b))))
+    actual = measure_shape(mesh)
+    np.testing.assert_allclose(actual.aspect_ratios, aspect, rtol=2e-15)
+    np.testing.assert_allclose(actual.minimum_angles, np.min(angles, axis=0), rtol=2e-15)
+
+
+def test_local_shape_keeps_degeneracy_and_unresolved_coordinate_guards(square):
+    for coordinates in (
+            np.array([[0., 0., 0.], [1., 0., 0.], [.5, 1e-25, 0.], [0., 1., 0.]]),
+            square.coordinates+1e20):
+        with pytest.raises(MeshBlocked, match='퇴화'):
+            measure_shape(replace(square, coordinates=coordinates))

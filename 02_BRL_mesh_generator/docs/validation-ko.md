@@ -2,6 +2,31 @@
 
 정리일: 2026-10-20. 사용 흐름·알고리즘·변수·발행 조건은 [사용자 guide](mesh-generator-guide-ko.html)를 기준으로 읽는다. 이 파일은 개발 증거와 이력 연결을 보존하며, 제품의 실행 보고서가 아니다.
 
+## 2026-11-04 최종 회귀 및 대표 측정
+
+최종 제품 source hash `436ba81d7e29ee3944981754ca7971d5f0f97b4e75ea4e3ddf650d58d3f7dc6d`가 불변인 상태에서 전체 회귀 **548 passed / 679.76초 / exit 0**을 확인했다. 증거는 `.cache/audit-20261102/optin-final.log`, XML, exit 및 source-hash 파일이다. 대상 74건·19건·38건은 별도 단위/대상 시험이다.
+
+다음은 기존 entity 방식과 local 방식의 두 사례 비교다. 각 pure 실행 3회 중앙값이며 측정 여건과 형상에 한정한다. 편차 ratio는 표본 편차를 허용값으로 나눈 값이며, 두 local 결과 모두 이 표본 조건을 통과했지만 기준보다 편차가 크다.
+
+| 사례 | 시간 entity → local | triangles entity → local | 영역 밖 triangles entity → local | 표본 편차 ratio entity → local | 최소각 entity → local | 최대 AR entity → local |
+|---|---:|---:|---:|---:|---:|---:|
+| local-bend | 18.175 → 16.552초 (−8.93%) | 440 → 354 | 112 → 51 | 0.446 → 0.620 | 30.90° → 32.27° | 1.960 → 1.709 |
+| sphere | 1.708 → 1.615초 (−5.42%) | 966 → 786 | 해당 없음 | 0.441 → 0.855 | 37.35° → 21.27° | 1.630 → 2.874 |
+
+구의 local 결과는 품질 조건은 통과했지만 최소각과 최대 AR의 여유가 줄었다. 16회 실행(각 pure 3회와 계측 1회, 두 방식·두 사례)에서 전체 계약·독립 NAS 검증·제품 source hash 일치를 확인했다. 계측 실행은 시간 중앙값에 포함하지 않았다. 두 사례의 속도나 표본 편차로 모든 CAD의 성공, 일반적 속도 향상 또는 EM 정확도를 보장하지 않는다. 원자료는 `.cache/performance/local-curvature-optin-20261104/results.json`과 `.cache/audit-20261102/final-measurement-summary.json`이다.
+
+실제 FLTK API 주입 실행은 fresh process에서 작은 판 44개와 큰 판 55,560개 삼각형을 각각 한 번 성공했다. 큰 판의 observer 제외 event-pump 진입 간격 최대 208.43 ms, loop body 최대 144.98 ms이며 adopt 94.34 ms, 첫 명시 draw 36.33 ms, helper 17.17 ms, main commit 1.35 ms였다. 단계는 중첩될 수 있고 이전 UI와 비교한 수치가 아니다. 마우스 입력·첫 픽셀·GPU 완료·모든 환경의 최대 멈춤은 측정하지 않았다. 같은 프로세스에서 두 번째 FLTK 초기화 시 access violation이 발생했으나 별도 새 프로세스의 큰 판은 성공했으며 원인은 확정되지 않았다. 개발 probe는 한 프로세스에 한 사례·한 번만 허용한다. 원자료는 `.cache/performance/native-fltk/`의 `optin-fltk-20261104-tcuwv9uf/results.json` 및 `optin-fltk-large-fresh-20261104-q6ztbbp8/results.json`이다.
+
+HTML 시각 QA는 Chrome headless 실행 실패와 IAB file URL 정책 차단으로 미완료다.
+
+## 2026-11-04 현재 S2/O5 검증 상태
+
+S2는 `mesh.curvature.feedback`의 기본값 `entity`를 유지하고 `local`을 명시 선택할 때만 위반 표본 주위 크기장을 적용한다. 기존 편차·품질·독립 NAS 검증은 유지하며 실패 시 차단한다. O5는 NAS 복사·hash를 helper thread에서 수행하고 main thread에서 현재성을 재확인해 확정한다. 변경된 임시 경로와 외부 추가 파일은 보존하고 정리 실패를 경고한다. Provenance는 schema 3이다. 곡률 관련 대상 74건(291.744초), 정리·소유권 19건, 설정·provenance·UI 38건이 통과했다. 최종 전체 회귀 548건이 통과했고 대표 성능 측정의 조건과 한계는 아래에 기록했다.
+
+확장 중 전체 회귀는 538 passed/4 failed, 후속 대상 실행은 92 passed/2 failed였다. 기본 전면 feedback 교체에서 드러난 ogive 관련 실패를 해결하기 위해 검증된 entity 방식을 기본으로 복원하고 local을 선택 사항으로 분리했다. 분리 후 곡률 관련 대상 74건이 통과했으나 이 결과는 모든 CAD에서 local 성공을 뜻하지 않는다. 이후 최종 전체 회귀 548건이 통과했다.
+
+Windows는 검증한 대상 파일의 deny-write handle을 commit 직전 닫고 곧바로 rename하므로 그 사이 외부 경쟁이 남는다. 비 Windows에서는 main thread에서 다시 hash한다. Gmsh adopt·render·검사와 rename은 main thread에 남으며 무정지를 보장하지 않는다.
+
 ## 현재 기준과 변경 범위
 
 - 고정 환경: Python 3.12.14, uv 0.12.20, Gmsh 4.15.2, NumPy 1.26.4, pyNastran 1.4.1, pytest 8.4.2. `pyproject.toml`, `uv.lock`, `.python-version`으로 환경을 관리한다.
@@ -229,3 +254,113 @@ Gmsh 4.15.2에서 기준 edge (0,0)→(1,0), 세 번째 점 (x,h)의 104개 1차
 - 사용자 요청에 따라 native `launch`에서 wave가 생략된 시작 설정에 `Wave(1e9)`를 적용한다. 시작값은 1 GHz·파장당 요소 수 10·상대 유전율/투자율 각 1이다. 명시된 wave 설정은 보존하고 실행 중 체크 해제도 허용한다.
 - 기본값은 Controller에 전달할 설정에 먼저 반영해 worker 실행과 설정 변경 감지가 같은 조건을 사용한다. 원래 Configuration과 JSON 파일은 변경하지 않는다. CLI에서 wave 생략 시 OFF라는 schema 의미도 유지한다. Target size가 활성화되어 있으면 기존처럼 두 길이 중 작은 값을 사용한다.
 - `tests/test_native_ui.py`와 `tests/test_sizing_config.py` 70건 통과(3.16 s). 기본 ON·사용자 주파수/매질 보존·체크 해제·원 설정 불변·기존 idle/Action 동작을 확인했다. 실제 FLTK `tools.native_ui_smoke examples/plate.json`에서 비동기 생성·NAS 검증·발행·종료를 확인했다(30 event pumps, 최대 간격 0.296 s).
+
+## 2026-11-02 전범위 점검 후 개선 — 진행 기록
+
+기준 점검은 로컬 `.cache/audit-20261102/검토결과.md`와 source commit `4659b8b252c56dc27661cf87ce8f52137026ec4a`에 기록했다. 아래는 변경 중인 작업 트리의 상태이며 최종 통합 결과가 아니다. 기준 코드의 354건 회귀와 이전 성능 측정은 변경 후 결과가 아니다.
+
+- R1: 삼각형 AABB 후보와 국소 좌표 판정으로 내부 교차·공면 중첩을 검사하고 불확실한 경우 차단한다. 정상 공유 경계와 양의 gap을 구분한다. 회전·이동한 얇은 판과 비공면 비공유 단일점 접촉 보완은 대상별 시험에서 확인했다. 부동소수점 검사는 exact arithmetic 또는 연속 형상 오차의 증명이 아니다.
+- R2: Gmsh 4.15.2의 실제 background 선택을 로컬 임시 `.geo_unrolled` 직렬화에서 읽어 생성 참조와 대조한다. field 목록이 비어 있을 때의 미등록 활성 ID도 대조한다. 관련 XAO 등 임시 파일은 전용 폴더에 둔다. 이 검사는 대형 CAD에서 직렬화 시간·디스크 비용이 들 수 있으며 성능 측정은 남았다.
+- R3/R4: `output_dir`만 바뀌면 현재 mesh의 전체 발행 재검사를 거쳐 새 위치에 발행할 수 있다. 생성에 영향을 주는 다른 설정은 기존처럼 재생성이 필요하다. 삼각형 품질 정규화에는 요소별 국소 edge 척도를 사용한다.
+- O1: 검사 1회 안에서 삼각형 좌표·외적·크기를 read-only로 공유해 shape/normals/geometry의 일부 중복을 제거한다. 외부 진입과 ICN 직전 현재성 확인은 유지하며, 영구 캐시나 topology 전체 자료 공유는 구현하지 않았다.
+- O2/O4/D4: 곡률 편차 계산은 동일 entity·bounded batch 안에서 정확히 동일한 표본의 투영을 재사용하고 원래 표본과 요소별 최대값을 보존한다. NAS 자체 검사는 줄 단위로 읽으며 독립 pyNastran 검사 전에 자체 검사 자료를 해제한다. 로컬 stage에서 검증한 NAS만 목적지 임시 폴더에 복사해 SHA-256 대조 후 확정한다. Native worker 경로의 추가 로컬 복사 성능은 아직 측정하지 않았다.
+- S3/D1: 같은 메쉬 상태에서 거부된 개선 방법의 무의미한 반복을 중단한다. 형상 실패에는 최대 AR·최소각·위반 요소 수를 표시한다. curve sampling은 실패 구간에 더 이상 표현 가능한 parameter를 추가할 수 없거나 coverage 실패 시 전체 구간의 수치 정밀도가 소진되면 차단한다. 기존 표본·spacing·chord 조건을 유지하며 plateau만으로 중단하지 않고 임의 표본 수·반복 상한을 추가하지 않는다. 모든 실패의 entity/element 정보와 기하 충돌 조기 진단은 아직 구현 범위가 아니다.
+- S4: 별도 취소 action은 창을 유지한다. worker 실패·취소 시 현재 설정과 CAD/field/경계/기존 mesh가 확인될 때만 이전 scene을 유지한다. adopt 중 Gmsh 모델이 바뀐 뒤의 복원은 보장하지 않고 차단한다. worker 종료를 확인하지 못하면 취소 대기 상태에서 새 작업을 차단하고 재시도를 허용한다. UI Close도 worker 종료 확인 전에는 창을 유지하며, OS 창이 이미 닫힌 경우 종료 미확인과 PID를 오류로 알린다. 확정 후 임시 정리 오류는 완료된 NAS 발행 상태와 경로를 유지하며 별도로 표시한다. CLI 성공 stdout은 status/nas_path만 포함하고 경고는 stderr로 보낸다.
+
+각 작업의 대상별 시험 결과와 한계는 로컬 `.cache/audit-20261102/*-progress.md` 및 `IMPLEMENTATION.md`를 참조한다. 1차 통합 회귀는 **406 passed, 376.21초**였으나, 이후 접촉·빈 field·정리/종료 경계 보완 전의 결과다. 그 후에는 각 담당 대상별 시험만 확인했다. **후속 경계 보완과 BVH 최적화 직후 회귀는 446 passed, 378.39초(exit 0)**였다. 이 결과는 이후 D2 provenance 변경 전의 결과다. 성능 비교는 아래에 기록한다. 향후 결과가 나오면 조건과 함께 별도로 기록한다.
+
+### 2026-11-02 BVH 부분 최적화와 순차 성능 비교
+
+신규 교차 검사 BVH의 leaf 크기와 중복 AABB mask 계산을 조정했다. 후보 집합과 중복 여부를 exhaustive 및 실제 메쉬와 비교하고 관련 시험 68건이 통과했다. 이는 O3의 BVH 순회 일부이며 topology 전체 배열화, 국소 크기 감사 공간 인덱스와 대규모 CAD·peak memory 평가는 남았다.
+
+같은 조건에서 profiler 없이 각 사례를 3회씩 순차 실행한 중앙값이다. 기준은 source commit `4659b8b252c56dc27661cf87ce8f52137026ec4a`이며, 최초 개선 뒤 BVH 순회를 최적화한 현재 코드와 비교했다. 외부 시스템 부하는 통제하지 않았다. 시간은 전체 생성부터 NAS 검증·발행까지의 측정이며 일반적인 모든 CAD의 속도를 의미하지 않는다.
+
+| 조건 | 기준 | 최초 개선 | BVH 최적화 후 | 기준 대비 최종 변화 |
+|---|---:|---:|---:|---:|
+| plate, 14,038 triangles | 1.849 s | 3.294 s | 2.485 s | +34.36% |
+| sphere_auto_curvature, 4,872 triangles | 8.446 s | 8.904 s | 8.780 s | +3.95% |
+
+각 조건에서 기준·변경 후 NAS SHA-256, node 수와 triangle 수는 같았다. 별도 동일 mesh에서 **신규 교차 함수만** 교대로 3회 측정한 중앙값은 BVH 수정 전 대비 plate 약 54.9%, 구 약 46.8% 감소했다. 이는 전체 작업 속도 향상률이 아니며, 전체 실행은 위 두 사례 모두 기준보다 오래 걸렸다. 비교 자료는 로컬 `.cache/audit-20261102/benchmark-comparison.json`, 함수 단독 자료는 `.cache/audit-20261102/intersection-traversal/timing.json`에 있다. 외부 EM solver 수렴과 대형 assembly 검증은 수행하지 않았다.
+
+후속 경계 보완과 BVH 최적화 후 전체 회귀는 446 passed, 378.39초(exit 0)였다. 이후 D2 provenance 변경은 이 회귀에 포함되지 않는다.
+
+
+## 2026-11-03 NAS 생성 참조 provenance
+
+NAS 단일 파일의 `$ BRL-PROV` 주석에 당시 schema 2의 canonical ASCII JSON을 SHA-256과 순번이 있는 base64 조각으로 기록한다. 직접 `nas.write` 호출에서 provenance 생략은 지원되며, 메타데이터가 있으면 strict reader는 chunk·hash·schema를 검사한다. 유효 설정의 중첩 항목은 기존 설정 parser를 재사용하며 CAD 경로만 내부 대체해 원본 파일이 없는 환경에서도 검증한다. 일반 설정 입력은 기존대로 CAD 원본 파일 존재를 요구한다. 발행 경로는 원 생성 참조와 정확히 대조한 뒤 독립 pyNastran의 node/element ID·좌표·연결·PID 검사를 수행한다.
+
+생성 참조는 output_dir을 제외한 유효 설정, 파일 CAD 원본 bytes SHA-256(파일이 없는 native 형상은 null), generator/Gmsh 버전, 설정된 mesh/thread 옵션, `brl_mesh/*.py` 직접 파일의 상대 경로와 bytes를 길이 접두로 결합한 source hash를 포함한다. Git base commit과 Git이 확인한 해당 범위의 tracked 및 무시되지 않은 untracked 파일의 dirty 여부는 별도 표시하며 Git을 사용할 수 없으면 null이다. base commit이나 clean 표시는 실행 중 메모리의 코드가 commit과 정확히 같다는 증거가 아니다. 파일 읽기와 생성·검사 사이의 변경을 원자적 snapshot으로 보장하지 않는다. 실제 내부 알고리즘·실제 thread 수·개선 이력은 확인되지 않아 null이다. CAD 경로는 기존 형상 주석과 유효 설정에 포함될 수 있다.
+
+원 생성 참조는 canonical 문자열로 보관하고 native worker의 생성 결과 및 현재 메쉬 action에 전달한다. 발행 시 설정·CAD·코드 범위·설정 옵션을 재확인하며, 원 참조를 모르면 임의로 생성 이력을 만들지 않고 차단한다. Direct writer의 provenance 생략은 별도로 지원되는 API다.
+
+대상 시험에서 plate/sphere CLI와 worker의 NAS bytes 동일성, 현재 mesh action 3/4, 출력 위치 변경, 코드 hash 및 CAD 변경 차단, 주석 변조·schema 위반 차단, mesh card 불변을 확인했다. 이전 446건 전체 회귀와 위 성능 수치는 이 provenance와 후속 S3 변경 전 결과다. 변경 후 전체 회귀 및 성능 측정 결과는 아래 2026-11-03 통합 재검증 절에 기록했다.
+
+
+## 2026-11-03 S3 표본화 정밀도 소진
+
+`curve_sampling`은 CAD 값·parameter bounds·표본 좌표와 chord의 유효성을 확인한다. Spacing을 위반한 구간에 표현 가능한 parameter를 더 이상 넣을 수 없거나, chord coverage 조건이 실패한 상태에서 모든 구간의 parameter 정밀도가 소진되면 `sampling_precision_conflict`로 차단한다. 기존 sampling 방식, 최대 chord/spacing 및 chord 합/CAD 길이 조건을 유지한다. 일시적인 plateau만으로 중단하지 않으며 임의의 표본 수 또는 반복 상한은 없다. 최종 `tests/test_curve_sampling.py` 15건이 통과했다. D2/S3 변경 후 전체 회귀와 성능 측정 결과는 위 통합 재검증 절에 기록했다.
+
+S1 알고리즘 재시도의 승인된 일부 구현과 대상별 시험은 아래 후속 기록을 참조한다. 실제 CAD 성공률은 측정하지 않았다.
+
+
+## 2026-11-03 D2/S3 통합 재검증과 성능 비교
+
+최초 전체 회귀는 4 failed, 473 passed, 385.71초였다. 세 실패는 정수와 실수 설정의 정규화 차이, 한 실패는 provenance가 다른 설정의 전체 NAS bytes 비교에 따른 것이었다. 설정 정규화를 통일하고 후자는 mesh card 동일성과 metadata 차이를 별도로 검증한 뒤 전체 회귀 **478 passed, 381.77초(exit 0)**였다. 실행 시작과 종료 시 제품 소스 hash가 같았다.
+
+Profiler 없이 사례당 3회 순차 실행한 중앙값은 plate 2.514초, 곡률 구 8.728초였다. 기준 commit의 각각 1.849초, 8.446초에 비해 **35.97%, 3.34% 증가**했다. 외부 시스템 부하는 통제하지 않았다. 기준·provenance 이전·현재의 node 수, triangle 수와 주석을 제외한 NAS mesh card SHA-256은 각 사례에서 같았다. provenance 주석 추가에 따라 전체 NAS bytes는 의도적으로 달라졌다. 원자료는 로컬 `.cache/audit-20261102/provenance-sampling-comparison.json`과 `provenance-sampling-final.log`에 있다. 이는 두 사례의 측정이며 대형 CAD나 EM 정확도에 관한 결론이 아니다.
+
+
+## 2026-11-03 S1 품질 재생성과 O3 국소 감사 부분 구현
+
+- `generation.quality_retry`는 `none`이 기본이고 `delaunay`를 명시하면 새 생성의 기존 개선이 정상 반환되고 비형상 검사·양의 ICN은 통과했지만 형상 조건만 불합격인 경우에 한해 기본 요청 Algorithm 6에서 Algorithm 5로 한 번 재생성한다. CLI 및 native Action 1/2에 적용하며 현재 mesh Action 3/4에는 적용하지 않는다. 실제 Gmsh generate 예외의 재시도는 지원하지 않는다. 재생성 후보도 전체 검사와 독립 NAS 검증을 통과해야 한다. 왜곡을 주입한 회귀는 분기와 차단을 확인한 것이며 실제 CAD 성공률·속도 향상의 증명이 아니다.
+- 생성 옵션의 `generation` 키를 반영해 NAS provenance schema는 2다. Algorithm 5로 요청한 재생성의 참조는 해당 요청 옵션을 보존하며, 외부에서 현재 옵션을 바꾼 상태는 발행 전에 차단한다. 실제 Gmsh 내부 알고리즘·fallback 및 실제 thread 수는 여전히 unknown이다. 이전 schema 1 provenance에 대한 묵시적 호환은 제공하지 않는다.
+- O3 국소 크기 감사는 curve projection query가 4개 이상인 경우에만 유한 batch 안에서 동일 surface·동일 midpoint를 재사용한다. 서로 다른 surface는 합치지 않고 1–3개 curve와 Box-only는 기존 경로를 유지한다. 모든 대상 시험에서 전후 ratio는 정확히 같았다. 대표 width 사례(1,602 triangles)의 local audit만 교대 순서 각 3회 중앙값이 8.334→6.166 ms로 약 26% 감소했고 작은 width에서는 이득이 거의 없었다. 단일 curve는 원 경로이며 측정 변동이 있다. 전체 workflow 또는 모든 CAD의 향상으로 해석하지 않는다. 원자료는 `.cache/audit-20261102/local-audit-timing-20261103.json`.
+
+이 변경 후 전체 회귀와 메모리 benchmark 결과는 아래 최종 검증 절에 기록했다.
+
+
+## 2026-11-03 S1/O3 이후 최종 회귀와 NAS 메모리 측정
+
+S2/O5 확장 전 제품 소스 hash가 시험 후에도 동일한 조건에서 전체 회귀는 **513 passed, 385.88초(exit 0)**였다. 앞선 478건은 이 변경 이전 기록이다. 로컬 원자료는 `.cache/audit-20261102/retry-local-final.log`, XML 및 exit 파일이다.
+
+Profiler 없이 각 사례를 3회 순차 실행한 전체 작업 중앙값은 다음과 같다. 외부 시스템 부하와 파일시스템 cache는 통제하지 않았다.
+
+| 사례 | 기준 | 현재 | 기준 대비 |
+|---|---:|---:|---:|
+| 판, 14,038 triangles | 1.849초 | 2.524초 | +36.48% |
+| 곡률 구, 4,872 triangles | 8.446초 | 8.787초 | +4.03% |
+
+두 사례 모두 node·triangle 수와 주석을 제외한 NAS mesh card SHA-256은 기준과 일치했다. 이 결과는 전체 속도 향상이 아니라, 추가 검사 등을 포함한 현재 전체 작업이 해당 기준보다 오래 걸렸다는 측정이다. 원자료: `.cache/audit-20261102/retry-local-comparison.json`.
+
+별도 `tools/nas_memory_probe.py`로 합성 fan mesh에서 NAS writer·검증 및 hash 연산을 분리해 각 조건을 한 번씩 측정했다. 아래 메모리는 Windows의 **프로세스 생애 전체 최대 working set**으로 import·입력 mesh 구성 등을 포함하며, Python tracemalloc이나 검증 단계만의 순수 peak가 아니다. 독립 pyNastran 검증을 유지했다. 직접 writer는 provenance 주석을 생략하고, hash는 native worker의 `read_bytes`/`file_digest` 연산을 모사하며 worker 전송 전체를 측정하지 않는다. 외부 부하·cache를 통제하지 않은 단회 합성 사례다.
+
+| triangles | NAS 검증 peak 기준 → 현재 | 검증 시간 기준 → 현재 | hash 별도 프로세스 peak 기준 → 현재 |
+|---|---:|---:|---:|
+| 10,000 | 112.559 → 107.145 MiB | 0.198 → 0.195초 | 24.758 → 24.309 MiB |
+| 100,000 | 327.742 → 269.031 MiB | 2.197 → 2.122초 | 30.262 → 24.477 MiB |
+| 1,000,000 | 2,441.297 → 1,872.336 MiB | 23.447 → 22.374초 | 92.680 → 24.387 MiB |
+
+100만 요소 검증의 프로세스 peak는 이 한 사례에서 약 23.3% 낮았다. 이 수치로 실제 CAD, UI 전체 메모리 또는 일반적인 성능을 보장하지 않는다. 로컬 원자료는 `.cache/audit-20261102/nas-memory-10k-100k.json`, `nas-memory-1m.json`이다.
+
+
+## O5 native 단계의 제한적 측정
+
+Headless 상태에서 각 사례·action을 3회씩, 총 12회 측정했으며 모두 성공했고 동일 사례의 NAS hash가 일치했다. 표는 각 단계의 중앙값(초)이다. 생성·발행 Action 1의 adopt는 CAD/MSH를 가져오고, 현재 mesh 발행 Action 4의 adopt는 기존 mesh를 대조한다. Worker 대기는 NativeJob 생성 이후부터 측정하며 worker 시작과 생성 단계가 겹칠 수 있다.
+
+| 사례 / action | job 초기화 | worker 대기 | adopt | NAS 전달 확정 |
+|---|---:|---:|---:|---:|
+| 판 / 새 생성·발행 | 0.0083 | 3.657 | 0.0367 | 0.0090 |
+| 판 / 현재 mesh 발행 | 0.0441 | 2.518 | 0.0478 | 0.0097 |
+| 곡률 구 / 새 생성·발행 | 0.0082 | 9.763 | 0.0269 | 0.0088 |
+| 곡률 구 / 현재 mesh 발행 | 0.0315 | 7.044 | 0.0222 | 0.0090 |
+
+이 값은 headless 동기 단계 시간이며 실제 FLTK 창·render·event pump를 측정하지 않았다. 따라서 UI 응답 지연이나 최대 멈춤 시간을 뜻하지 않는다. Probe가 추가 수행한 전체 mesh 검사와 최종 독립 NAS 검사는 위 단계 시간에 넣지 않았다. 대형 CAD도 측정하지 않았으며 이 수치는 O5 비동기화 전 측정이다. 원자료는 로컬 `.cache/audit-20261102/native-stages-summary.json`과 그 안의 source 경로에 있다.
+
+## 2026-11-03 S2/O5 확장 통합 중간 검증
+
+- 기준 전체513회귀 이후 S2 face-local sampled-deviation feedback과 O5 순수NAS I/O 비동기화를 구현했다. 모든 기존 gate·Gmsh main-thread·독립 pyNastran 대조를 유지한다. 다음 수치는 확장 전 기록을 대체하는 성공 선언이 아니다.
+- S2 대상69건 54.197s exit0, O5 file/barrier19건 exit0. 전체 회귀는 `local-ui-final.log/xml`에서 **4 failed, 538 passed, 402.46s, exit1**. 시작/확인 source hash `c01d986fd8bb96c889510fd83ea95f3c1552eac4e7296ea996a4e3ac40844acb` 일치.
+- 당시 세 실제 회귀는 native/worker ogive의 형상조건과 상대편차 iteration 소진이었다. 한 건은 필렛의 이전 전면feedback 요소수4256 고정 기대값(현재4296); 동일입력 NAS 재현성과 최종gate는 통과했다. 숫자 고정은 최종계약/재현성 검사로 대체했다. 이후 entity 기본/local 선택 설계와 대상 시험 결과는 맨 위 현재 상태를 참조한다.
+- O5는 helper 완료까지 job/source/pending 소유권을 유지하며, 변경된 폴더/파일과 외부 추가파일을 정리 대상으로 삼지 않는다. Windows의 검증된 target은 쓰기를 거부하는 handle을 commit 직전까지 유지한다. 부모디렉터리 rename을 위해 handle close 후 즉시 rename하며 그 사이 외부경쟁은 원자적으로 보장하지 않는다. 비 Windows는 main thread 재hash 경로다.
+- 통합 HTML은 기존본문16장·MathML6·SVG7을 보존하고 현 동작으로 수정했다. IDs27/내부anchor42/로컬링크/외부자산/중첩 검증과 예제JSON13개 확인을 완료했다. 현재판 화면검증은 Chrome headless 실행 실패 및 IAB file URL 정책 차단으로 미완료다. 정책우회는 하지 않았다.
+- 대표 국소곡률 성능 및 실제 FLTK event-pump 측정 결과는 위 최종 측정 절을 참조한다. 원자료는 `.cache/audit-20261102` 및 개발용 tools에 보존하며 제품 산출물은 mesh.nas 하나다.

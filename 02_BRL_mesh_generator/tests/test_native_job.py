@@ -130,3 +130,152 @@ def test_curved_shape_selection_preserves_explicit_curvature_choice(controller, 
     gmsh.onelab.setString(ui.KIND, ['sphere'])
     controller.invalidate_if_changed(deep=False)
     assert list(gmsh.onelab.getNumber(ui.CURVATURE_ENABLED)) == [1]
+
+
+def test_worker_publish_after_output_directory_change(controller, config, tmp_path):
+    controller.perform(2)
+    wait(controller)
+    scene = controller.scene
+    assert scene is not None
+    target = tmp_path / 'new-output'
+    gmsh.onelab.setString(ui.OUTPUT, [target.as_posix()])
+    controller.invalidate_if_changed()
+    assert controller.scene is scene
+    controller.perform(4)
+    wait(controller)
+    assert gmsh.onelab.getString(ui.STATUS) == ['NAS published']
+    assert Path(gmsh.onelab.getString(ui.NAS_PATH)[0]).parent.parent == target
+
+
+def test_worker_output_change_during_job_blocks_publication(controller, config, tmp_path):
+    controller.perform(1)
+    gmsh.onelab.setString(ui.OUTPUT, [(tmp_path / 'other').as_posix()])
+    wait(controller)
+    assert '설정이 변경' in gmsh.onelab.getString(ui.STATUS)[0]
+    assert not config.output_dir.exists()
+    assert not (tmp_path / 'other').exists()
+
+
+def test_failed_generation_retains_previous_current_scene(controller):
+    controller.perform(2)
+    wait(controller)
+    scene, mesh = controller.scene, controller.last_mesh
+    controller.perform(2)
+    controller.job.process.terminate()
+    controller.job.process.wait(timeout=5)
+    wait(controller)
+    assert controller.scene is scene and controller.last_mesh is mesh
+    assert gmsh.onelab.getString(ui.STATUS)[0].startswith('Blocked:')
+
+
+def test_cancel_action_retains_previous_scene_and_window(controller):
+    controller.perform(2)
+    wait(controller)
+    scene = controller.scene
+    controller.perform(2)
+    process = controller.job.process
+    controller.perform(6)
+    assert process.poll() is not None and controller.job is None
+    assert controller.scene is scene and not controller.close_requested
+    assert 'previous mesh retained' in gmsh.onelab.getString(ui.STATUS)[0]
+
+
+def test_cancel_invalidates_scene_if_controls_changed(controller):
+    controller.perform(2)
+    wait(controller)
+    controller.perform(2)
+    gmsh.onelab.setNumber(ui.TARGET, [.3])
+    controller.perform(6)
+    assert controller.scene is None and controller.last_mesh is None
+    assert 'regenerate required' in gmsh.onelab.getString(ui.STATUS)[0]
+
+
+def test_adopt_failure_after_model_clear_never_restores_old_scene(controller, monkeypatch):
+    controller.perform(2)
+    wait(controller)
+    assert controller.scene is not None
+    controller.perform(2)
+    def broken_adopt(*args):
+        gmsh.clear()
+        raise RuntimeError('import failed')
+    monkeypatch.setattr(controller.job, 'adopt', broken_adopt)
+    wait(controller)
+    assert controller.scene is None and controller.last_mesh is None
+    assert 'import failed' in gmsh.onelab.getString(ui.STATUS)[0]
+
+
+def test_cleanup_failure_does_not_hide_successful_publication(controller, monkeypatch):
+    controller.perform(1)
+    job = controller.job
+    close = job.close
+    def cleanup_fails():
+        close()
+        raise PermissionError('locked')
+    monkeypatch.setattr(job, 'close', cleanup_fails)
+    wait(controller)
+    assert controller.scene is not None
+    assert gmsh.onelab.getString(ui.STATUS)[0].startswith('NAS published; temporary cleanup failed:')
+    assert Path(gmsh.onelab.getString(ui.NAS_PATH)[0]).is_file()
+
+
+def test_failed_termination_keeps_worker_owned_and_blocks_new_job(controller, monkeypatch):
+    controller.perform(1)
+    job = controller.job
+    close = job.close
+    def termination_fails():
+        raise PermissionError('termination denied')
+    monkeypatch.setattr(job, 'close', termination_fails)
+    controller.perform(6)
+    assert controller.job is job and controller.cancel_pending
+    assert job.process.poll() is None
+    controller.poll()
+    controller.perform(1)
+    assert controller.job is job
+    monkeypatch.setattr(job, 'close', close)
+    controller.perform(6)
+    assert job.process.poll() is not None and controller.job is None
+    assert not controller.cancel_pending
+
+
+def test_poll_failure_and_termination_failure_retain_job(controller, monkeypatch):
+    controller.perform(1)
+    job = controller.job
+    close = job.close
+    monkeypatch.setattr(job, 'result', lambda: (_ for _ in ()).throw(RuntimeError('result failed')))
+    monkeypatch.setattr(job, 'close', lambda: (_ for _ in ()).throw(PermissionError('termination denied')))
+    controller.poll()
+    assert controller.job is job and controller.cancel_pending
+    assert 'result failed' in gmsh.onelab.getString(ui.STATUS)[0]
+    assert 'termination denied' in gmsh.onelab.getString(ui.STATUS)[0]
+    controller.perform(1)
+    assert controller.job is job
+    monkeypatch.setattr(job, 'close', close)
+    controller.perform(6)
+    assert controller.job is None
+
+
+def test_close_retries_worker_termination_without_closing_window(controller, monkeypatch):
+    controller.perform(1)
+    job = controller.job
+    close = job.close
+    monkeypatch.setattr(job, 'close', lambda: (_ for _ in ()).throw(PermissionError('termination denied')))
+    controller.perform(5)
+    assert controller.job is job and controller.cancel_pending and not controller.close_requested
+    monkeypatch.setattr(job, 'close', close)
+    controller.perform(5)
+    assert controller.job is None and controller.close_requested
+
+
+def test_worker_publication_warnings_reach_ui(controller, monkeypatch):
+    controller.perform(1)
+    job = controller.job
+    result = job.result
+    def with_warning():
+        value = result()
+        if value is not None:
+            value['warnings'] = ['local cleanup failed']
+        return value
+    monkeypatch.setattr(job, 'result', with_warning)
+    wait(controller)
+    assert 'NAS published; local cleanup failed' == gmsh.onelab.getString(ui.STATUS)[0]
+    assert Path(gmsh.onelab.getString(ui.NAS_PATH)[0]).is_file()
