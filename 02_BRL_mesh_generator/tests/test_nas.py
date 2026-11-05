@@ -1,7 +1,29 @@
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from brl_mesh import nas
 from brl_mesh.errors import MeshBlocked
+
+
+def test_generate_import_skips_reader_but_publication_always_loads_it(tmp_path):
+    code = '''
+import sys
+from brl_mesh.config import Configuration
+from brl_mesh.engine import run
+assert 'pyNastran.bdf.bdf' not in sys.modules
+config = Configuration.from_dict({'schema_version': 1,
+    'geometry': {'kind': 'plate', 'length': 1, 'width': 1},
+    'mesh': {'target_size': .25}, 'output_dir': sys.argv[1]})
+result = run(config)
+assert 'pyNastran.bdf.bdf' in sys.modules
+assert result.nas_path.is_file()
+'''
+    result = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', code, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_independent_round_trip_noncontiguous_ids(square, tmp_path):

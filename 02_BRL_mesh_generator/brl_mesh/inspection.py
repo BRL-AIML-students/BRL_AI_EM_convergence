@@ -9,7 +9,7 @@ import numpy as np
 
 from .checks import ShapeValues, _measure_shape
 from .errors import MeshBlocked
-from .model import SurfaceMesh, assert_current
+from .model import SurfaceMesh, assert_current, surface_groups
 from .normals import NormalValues, _inspect_normals
 from .preservation import GeometryValues, _measure_geometry
 from .quality import read_icn
@@ -82,8 +82,9 @@ def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
         array.setflags(write=False)
     shape = _measure_shape(xyz)
     topology = inspect_topology(mesh, contract.boundary)
-    normals = _inspect_normals(mesh, contract.sheet_signs, xyz, cross, magnitude)
-    geometry = _measure_geometry(mesh, xyz, cross, magnitude)
+    groups = surface_groups(mesh.surface_tags)
+    normals = _inspect_normals(mesh, contract.sheet_signs, xyz, cross, magnitude, groups=groups)
+    geometry = _measure_geometry(mesh, xyz, cross, magnitude, groups=groups)
     issues = list(topology.issues + normals.issues + geometry.issues)
     if not np.isfinite(contract.target_size) or contract.target_size <= 0:
         issues.append(Issue('invalid_target', '목표 길이가 유효하지 않습니다', 'incomplete'))

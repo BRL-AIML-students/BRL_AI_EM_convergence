@@ -84,10 +84,23 @@ def polygon_width(surface):
     if np.any(lengths <= 1e-12):
         raise MeshBlocked('width_incomplete: 중복/수치상 퇴화 경계')
     normals = np.column_stack((-edges[:, 1], edges[:, 0])) / lengths[:, None]
-    projections = uv @ normals.T
-    width = float(np.ptp(projections, axis=0).min()) * scale
+    width = _support_width(uv, normals) * scale
     if not math.isfinite(width) or width <= 0:
         raise MeshBlocked('width_incomplete: 유효한 폭이 없습니다')
+    return width
+
+
+def _support_width(points, normals):
+    """Same supporting-line widths, with bounded point/normal projection tiles."""
+    width = np.inf
+    for start in range(0, len(normals), 256):
+        tile = normals[start:start+256]
+        low, high = np.full(len(tile), np.inf), np.full(len(tile), -np.inf)
+        for offset in range(0, len(points), 4096):
+            projections = points[offset:offset+4096] @ tile.T
+            low = np.minimum(low, projections.min(axis=0))
+            high = np.maximum(high, projections.max(axis=0))
+        width = min(width, float((high-low).min()))
     return width
 
 

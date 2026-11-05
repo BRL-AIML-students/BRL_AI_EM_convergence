@@ -84,14 +84,19 @@ def test_local_request_does_not_clamp_below_minimum(monkeypatch):
         plan.size(2, 1, [0, 0, 0])
 
 
-def test_final_grid_feedback_owns_final_sample_seeds_and_is_consumed_once(square, monkeypatch):
+@pytest.mark.parametrize('budget', [31, 24320])
+def test_final_grid_feedback_owns_final_sample_seeds_and_is_consumed_once(square, monkeypatch, budget):
+    from brl_mesh import curvature_sampling
+    monkeypatch.setattr(curvature_sampling, '_SAMPLE_POINTS', budget)
     plan, _ = pending_plan(monkeypatch, [])
     plan.settings = SimpleNamespace(max_iterations=3, verification_nodes=19, feedback='local')
     plan.tolerances = {(2, 7): .01}
     plan.scales = {(2, 7): 1.}
-    def project(dim, tag, points):
+    def project(dim, tag, points, *, audit=None):
         projected = points.copy()
         projected[np.isclose(points[:, 0], 1/18, rtol=0, atol=1e-15), 2] += .02
+        if audit is not None:
+            audit.observe(points, projected, 0.)
         return projected, np.zeros((len(points), 2))
     monkeypatch.setattr(curve, 'project', project)
     coarse = plan.measure(square, sampling=10)

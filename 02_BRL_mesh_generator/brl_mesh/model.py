@@ -8,6 +8,19 @@ import numpy as np
 from .errors import MeshBlocked
 
 
+def surface_groups(tags: np.ndarray) -> dict[int, np.ndarray]:
+    """Stable per-surface indices, rebuilt within each mutable-mesh transaction."""
+    if not len(tags):
+        return {}
+    if np.all(tags == tags[0]):
+        return {int(tags[0]): np.arange(len(tags))}
+    order = np.argsort(tags, kind='stable')
+    sorted_tags = tags[order]
+    starts = np.r_[0, np.flatnonzero(sorted_tags[1:] != sorted_tags[:-1])+1]
+    stops = np.r_[starts[1:], len(order)]
+    return {int(sorted_tags[start]): order[start:stop] for start, stop in zip(starts, stops)}
+
+
 @dataclass(frozen=True)
 class SurfaceMesh:
     node_ids: np.ndarray
@@ -96,8 +109,8 @@ def assert_current(mesh: SurfaceMesh) -> None:
     if not gmsh.isInitialized():
         raise MeshBlocked('현재 Gmsh model이 없습니다')
     membership = {}
-    for surface in set(map(int, mesh.surface_tags)):
-        pids = np.unique(mesh.pids[mesh.surface_tags == surface])
+    for surface, indices in surface_groups(mesh.surface_tags).items():
+        pids = np.unique(mesh.pids[indices])
         if len(pids) != 1:
             raise MeshBlocked('한 surface의 PID 분류가 유일하지 않습니다')
         membership[surface] = int(pids[0])

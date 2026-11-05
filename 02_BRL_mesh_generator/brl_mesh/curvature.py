@@ -13,7 +13,8 @@ import gmsh
 import numpy as np
 
 from .errors import MeshBlocked
-from .model import assert_current
+from .model import assert_current, surface_groups
+from .curvature_sampling import deviation_batches
 
 
 def _measurement_key(mesh):
@@ -94,7 +95,30 @@ def _trim_mask(tag, parameters, count):
     return result
 
 
-def project(dimension, tag, points, *, trimmed=True):
+class _ProjectionAudit:
+    """Scalar statistics for the original 128-element projection transaction."""
+    def __init__(self):
+        self.low, self.high = np.full(3, np.inf), np.full(3, -np.inf)
+        self.projected_max = self.initial_error = self.trim_error = 0.
+
+    def observe(self, points, projected, error):
+        self.low = np.minimum(self.low, points.min(axis=0))
+        self.high = np.maximum(self.high, points.max(axis=0))
+        self.projected_max = max(self.projected_max, float(np.max(np.abs(projected))))
+        self.initial_error = max(self.initial_error, float(error))
+
+    def require_pass(self):
+        if self.initial_error == self.trim_error == 0:
+            return
+        scale = max(self.projected_max, float(np.max(self.high-self.low)), 1e-300)
+        tolerance = max(128*np.finfo(float).eps*scale, gmsh.option.getNumber('Geometry.Tolerance'))
+        if self.initial_error > tolerance:
+            raise MeshBlocked('projection_incomplete: CAD parameter round-trip 불일치')
+        if self.trim_error > tolerance:
+            raise MeshBlocked('projection_trim_incomplete: 유효한 CAD trim 경계 투영을 구하지 못했습니다')
+
+
+def project(dimension, tag, points, *, trimmed=True, audit=None):
     """Return validated projections, including curve trim endpoints."""
     points = np.asarray(points, dtype=float).reshape(-1, 3)
     projected, parameters = gmsh.model.getClosestPoint(dimension, tag, points.ravel())
@@ -111,7 +135,10 @@ def project(dimension, tag, points, *, trimmed=True):
         parameters = _array(parameters, 2, len(points), 'surface parameters')
         reconstructed = _array(gmsh.model.getValue(2, tag, parameters.ravel()), 3, len(points), 'surface value')
         scale = max(float(np.max(np.abs(projected))), float(np.max(np.ptp(points, axis=0))), 1e-300)
-        if np.max(np.linalg.norm(reconstructed-projected, axis=1)) > max(
+        error = float(np.max(np.linalg.norm(reconstructed-projected, axis=1)))
+        if audit is not None:
+            audit.observe(points, projected, error)
+        elif error > max(
                 128*np.finfo(float).eps*scale, gmsh.option.getNumber('Geometry.Tolerance')):
             raise MeshBlocked('projection_incomplete: CAD parameter round-trip 불일치')
         if trimmed:
@@ -139,8 +166,11 @@ def project(dimension, tag, points, *, trimmed=True):
                                         len(outside), 'trim parameters')
                 reconstructed = _array(gmsh.model.getValue(2, tag, replacement_uv.ravel()), 3,
                                        len(outside), 'trim value')
-                if (np.max(np.linalg.norm(reconstructed-replacements, axis=1)) > max(
-                        128*np.finfo(float).eps*scale, gmsh.option.getNumber('Geometry.Tolerance'))
+                trim_error = float(np.max(np.linalg.norm(reconstructed-replacements, axis=1)))
+                if audit is not None:
+                    audit.trim_error = max(audit.trim_error, trim_error)
+                if ((audit is None and trim_error > max(128*np.finfo(float).eps*scale,
+                        gmsh.option.getNumber('Geometry.Tolerance')))
                         or gmsh.model.isInside(2, tag, replacement_uv.ravel(), parametric=True) != len(outside)):
                     raise MeshBlocked('projection_trim_incomplete: 유효한 CAD trim 경계 투영을 구하지 못했습니다')
                 projected[outside] = replacements
@@ -311,13 +341,11 @@ class CurvaturePlan:
         self._feedback = None
         assert_current(mesh)
         n = sampling or self.settings.verification_nodes
-        weights = np.array([(1-i/(n-1)-j/(n-1), i/(n-1), j/(n-1))
-                            for i in range(n) for j in range(n-i)])
-        line_weights = np.linspace(0, 1, n)
         result, ratios, feedback = [], [], []
+        groups = surface_groups(mesh.surface_tags)
         for dim, tag in sorted(self.tolerances):
             if dim == 2:
-                indices = np.flatnonzero(mesh.surface_tags == tag)
+                indices = groups.get(tag, np.empty(0, dtype=np.intp))
                 ids = mesh.element_ids[indices]
                 xyz = mesh.coordinates[np.searchsorted(mesh.node_ids, mesh.connectivity[indices])]
                 if not len(ids):
@@ -335,31 +363,19 @@ class CurvaturePlan:
                     raise MeshBlocked('deviation_incomplete: 경계 line node 대응 실패')
                 xyz = mesh.coordinates[np.searchsorted(mesh.node_ids, conn)]
             entity_max = 0.
-            for start in range(0, len(ids), 128):
-                batch = xyz[start:start+128]
-                samples = (np.einsum('ij,ejk->eik', weights, batch) if dim == 2 else
-                           batch[:, :1]+line_weights[None, :, None]*(batch[:, 1:]-batch[:, :1]))
-                # Keep every original sample, including its floating-point
-                # coordinates. Only exact duplicates on this CAD entity share
-                # a validated projection; inverse restores each element's rows.
-                # Retain bounded batches rather than materializing a full face's
-                # verification grid in memory.
-                unique, inverse = np.unique(samples.reshape(-1, 3), axis=0, return_inverse=True)
-                projected, _ = project(dim, tag, unique)
-                unique_distances = np.linalg.norm(projected-unique, axis=1)
-                distances = unique_distances[inverse].reshape(samples.shape[:2])
-                maxima = distances.max(axis=1)
-                if dim == 2 and self.settings.feedback == 'local':
+            local = dim == 2 and self.settings.feedback == 'local'
+            for start, maxima, seeds in deviation_batches(dim, tag, xyz, n, project,
+                                                         seeds=local, audit_factory=_ProjectionAudit):
+                batch = xyz[start:start+len(maxima)]
+                if local:
                     bad = np.flatnonzero(maxima/self.tolerances[dim, tag] > 1+1e-10)
                     if len(bad):
-                        argmax = distances[bad].argmax(axis=1)
-                        seeds = projected[inverse.reshape(samples.shape[:2])[bad, argmax]]
                         diameters = np.max(np.linalg.norm(batch[:, [1, 2, 0]]-batch, axis=2), axis=1)
                         feedback.extend((tag, tuple(center), 4*float(diameters[i]),
                                          min(.7, .7/math.sqrt(maxima[i]/self.tolerances[dim, tag])))
-                                        for i, center in zip(bad, seeds))
+                                        for i, center in zip(bad, seeds[bad]))
                 entity_max = max(entity_max, float(maxima.max()))
-                result.extend((dim, tag, int(e), float(v)) for e, v in zip(ids[start:start+128], maxima))
+                result.extend((dim, tag, int(e), float(v)) for e, v in zip(ids[start:start+len(maxima)], maxima))
             ratios.append(((dim, tag), entity_max/self.tolerances[dim, tag]))
         deviation = Deviation(tuple(result), tuple(ratios))
         self._feedback = ((deviation, mesh, tuple(feedback), _measurement_key(mesh))
