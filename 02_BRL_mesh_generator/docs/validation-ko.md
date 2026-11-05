@@ -1,5 +1,22 @@
 # 개발 검증과 유지보수 기록
 
+## 2026-11-05 검사 작업 메모리·중복 계산 개선
+
+- 곡률 편차 계산을 `curvature_sampling.py`로 분리했다. 기본 19-node 격자의 기존 128요소 묶음은 유지하고, 높은 해상도는 총 표본 수에 따라 요소 묶음과 한 요소 내부 격자를 나눈다. 전체 표본 좌표·순서·최대 편차·동률 시 첫 표본의 local feedback seed를 유지한다. 입력 상한이나 축소된 검증 격자를 추가하지 않았다.
+- Topology의 edge owner·node incident·fan 관계를 정수 배열로 구성하고 원래의 진단 순서·공유 방향·비다양체 검사를 유지했다. Node/edge 감사의 임시 자료는 삼각형 교차 BVH를 만들기 전에 해제한다. 이전 구현과 무작위 500개 입력에서 issue 순서·연결 성분·경계·인접 크기비가 일치했다.
+- 면별 요소 인덱스를 호출 안에서 한 번 구성한다. 법선과 면적 검사는 같은 호출의 인덱스를 공유하고, 변경 가능한 mesh에 걸쳐 캐시하지 않는다. 큰 다각형 폭 측정은 point/normal 행렬을 작은 블록으로 계산하며 rollback 직후의 중복 전 노드 조회를 제거했다.
+- 독립 reader는 실제 NAS 검증에서 지연 로딩한다. 생성 전용/UI의 초기 의존성을 줄이되, 발행의 독립 pyNastran 읽기와 대조는 유지한다.
+- 전체 회귀는 **583 passed / 651.99초 / exit0**였다. 이는 reader 지연 로딩 직전 source hash `5b4b8d440e38a2a46442bf24c2b627fafe87d25f767a5e8bb0e0baff05faae07`의 결과다. 마지막 지연 로딩·fresh-process 시험 추가 후 NAS·발행·provenance·native worker/UI 대상 **83 passed / 114.17초 / exit0**였다. 최종 source hash는 `3c08fbb70261fc5a0f1092dfc6c607c620e75f1d3fea253870323a907fe5e8cc`다. 최종584항목 전체를 한 번에 재실행한 결과는 아니다.
+- 같은 조건의 fresh process를 전후 번갈아 실행했다. 55,560면 판의 3회 시간 중앙값은 25.065→23.839초, 최대 working set은 290.0→245.4MiB였다. 14,038면·곡률 구·221,780면도 동일 node/triangle수·NAS mesh cards SHA-256과 낮아진 peak를 관측했다. 시간 편차가 커 일반적인 속도 향상을 보장하지 않는다. 221,780면은 전후 각1회다. 시간은 의존성 import부터 종료까지 포함해 지연 로딩 비용을 빠뜨리지 않는다.
+- n=1000 합성16삼각형에서 8,008,000표본을 모두 처리했고 최대 projection 호출24,320점, NumPy/helper 프로세스 peak46.3MiB였다. 실제 CAD/NAS가 없는 합성 사례다. Native55,560면 headless 생성의 부모+worker working set 표본 합은 356.3→271.7MiB, private commit은3189.1→1896.3MiB였다. 공유 페이지와 virtual commit을 실제 고유 RAM과 구분한다. 실제 FLTK/GPU·장기 누수·대형 assembly는 새로 측정하지 않았다.
+- 로컬 `.cache/optimization-20261105/수정및검증결과.md`, raw JSON·로그·XML·고정 baseline·독립 검토가 상세 근거다. 독립 검토에서 지적한 타일별 투영 허용값 회귀를 보완하고 큰 오프셋·전체 span·trim 대체점의 회귀를 추가했다.
+
+### 2026-11-05 GitHub 게시 사전 검증
+
+- Git의 LF 정규화를 적용한 전달 모듈의 제품 source hash는 `5568a4ea06da80c46c5c136f859e758597818b9cec0cef1e371ca80fc3fc8746`다. 위 Windows 로컬 검증 raw hash와는 줄바꿈 표현이 달라 별도로 기록한다. Python 내용은 LF 정규화 후 일치한다.
+- 최신 원격 main `9ed78e2c8185d5ba180216a545c919ce1b3c0e8a` 기반 전달 checkout에서 곡률 표본·topology·교차·작업 배열·NAS·provenance·native worker 대상 **152 passed / 86.04초 / exit0**을 확인했다. 실제 import 경로와 전달 모듈 hash도 확인했다.
+- 게시 파일은 모듈 내부 runtime·관련 테스트·guide·개발 검증 문서 19개로 한정한다. cache·가상환경·생성 NAS·개인 설정은 포함하지 않는다. 게시 기록과 manifest·XML·로그는 로컬 `.cache/optimization-20261105/release/`에 둔다.
+
 정리일: 2026-10-20. 사용 흐름·알고리즘·변수·발행 조건은 [사용자 guide](mesh-generator-guide-ko.html)를 기준으로 읽는다. 이 파일은 개발 증거와 이력 연결을 보존하며, 제품의 실행 보고서가 아니다.
 
 ## 2026-11-04 최종 회귀 및 대표 측정

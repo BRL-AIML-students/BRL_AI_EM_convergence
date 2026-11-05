@@ -10,7 +10,6 @@ import hashlib
 import base64
 
 import numpy as np
-from pyNastran.bdf.bdf import BDF
 
 from .config import UNIT_METRES
 from .errors import MeshBlocked
@@ -116,6 +115,9 @@ def validate(path: Path, expected: SurfaceMesh, *, provenance=None) -> None:
     try:
         with path.open(encoding='ascii') as stream:
             _validate_cards(stream, expected, provenance)
+        # Generate-only/UI processes do not need the independent reader's
+        # transitive native libraries; publication always loads and runs it.
+        from pyNastran.bdf.bdf import BDF
         reader = BDF(debug=False)
         reader.read_bdf(str(path), xref=False, punch=True, encoding='ascii')
         if set(reader.card_count) - {'GRID', 'CTRIA3', 'ENDDATA'}:

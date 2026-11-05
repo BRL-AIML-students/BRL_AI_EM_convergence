@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from .config import Configuration
-from .errors import ConfigurationError, MeshBlocked
+from .errors import MeshBlocked
 
 PROTOCOL = 'BRL_RESULT '
 WARNING = 'BRL_WARNING '

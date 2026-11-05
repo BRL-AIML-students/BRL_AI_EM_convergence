@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import gmsh
 import numpy as np
 
-from .model import SurfaceMesh
+from .model import SurfaceMesh, surface_groups
 from .validation import Issue
 
 
@@ -21,20 +21,21 @@ def measure_geometry(mesh: SurfaceMesh) -> GeometryValues:
     return _measure_geometry(mesh, xyz, cross, np.linalg.norm(cross, axis=1))
 
 
-def _measure_geometry(mesh, xyz, cross, magnitude):
+def _measure_geometry(mesh, xyz, cross, magnitude, *, groups=None):
     """Internal area/volume calculation sharing transaction-local triangles."""
     areas = magnitude / 2
     errors, volumes = [], []
+    groups = surface_groups(mesh.surface_tags) if groups is None else groups
     try:
-        for surface in sorted(set(map(int, mesh.surface_tags))):
+        for surface, indices in groups.items():
             reference = gmsh.model.occ.getMass(2, surface)
             if not np.isfinite(reference) or reference <= 0:
                 raise ValueError('CAD 면적을 계산하지 못했습니다')
-            measured = float(areas[mesh.surface_tags == surface].sum())
+            measured = float(areas[indices].sum())
             errors.append(abs(measured - reference) / reference)
         for _, volume in gmsh.model.getEntities(3):
             surfaces = {abs(tag) for dim, tag in gmsh.model.getBoundary([(3, volume)], oriented=False) if dim == 2}
-            if not surfaces <= set(map(int, mesh.surface_tags)):
+            if not surfaces <= groups.keys():
                 raise ValueError('solid 경계 일부가 mesh에 없습니다')
             indices = np.flatnonzero(np.isin(mesh.surface_tags, list(surfaces)))
             origin = xyz[indices].reshape(-1, 3).mean(axis=0)

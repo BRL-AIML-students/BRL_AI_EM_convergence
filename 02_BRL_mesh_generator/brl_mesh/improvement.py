@@ -70,8 +70,8 @@ def _rollback(state: _State, membership: dict[int, int], contract: MeshContract)
         _unchanged_structure(state, snapshot(membership, check_validity=False))
         for node, old in state.nodes.items():
             gmsh.model.mesh.setNode(node, old.coordinates.tolist(), old.parameters.tolist())
-        restored, current = snapshot(membership), _nodes()
-        _unchanged_structure(state, restored)
+        restored = snapshot(membership)
+        current = _unchanged_structure(state, restored)
         if not np.array_equal(state.mesh.coordinates, restored.coordinates) or any(
                 not np.array_equal(old.coordinates, current[n].coordinates)
                 or not np.array_equal(old.parameters, current[n].parameters) for n, old in state.nodes.items()):
