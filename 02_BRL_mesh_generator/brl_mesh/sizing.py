@@ -91,14 +91,15 @@ class SizingPlan:
         if any(gmsh.option.getNumber(name) != value for name, value in self.options):
             raise MeshBlocked('size_options_changed: 적용한 크기 옵션이 변경됐습니다. 다시 생성하세요')
 
-    def nominal_sizes(self, coordinates, surfaces=None):
+    def nominal_sizes(self, coordinates, surfaces=None, *, with_regions=False):
         """Continuous CAD-distance design, not Gmsh's sampled-field evaluator.
 
-        Used only for relocation non-regression. No strict every-edge target or
-        EM accuracy assertion is inferred from this midpoint-based audit.
+        Used by the relocation guard and development diagnostics. The values
+        express requested lengths, with optional core/transition region labels.
         """
         coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 3)
         result = np.full(len(coordinates), self.global_size)
+        regions = np.full(len(coordinates), 'global', dtype='<U10') if with_regions else None
         for item in self.features:
             feature = item.feature
             if feature.bounds is not None:
@@ -126,11 +127,19 @@ class SizingPlan:
                 fraction = np.clip((distance-item.hold)/item.transition, 0, 1)
             candidate = feature.size + fraction*(self.global_size-feature.size)
             if feature.surface is not None and surfaces is not None:
-                candidate = np.where(np.asarray(surfaces) == feature.surface, feature.size, candidate)
+                on_surface = np.asarray(surfaces) == feature.surface
+                candidate = np.where(on_surface, feature.size, candidate)
+                if regions is not None:
+                    fraction = np.where(on_surface, 0, fraction)
+            if regions is not None:
+                tighter = candidate < result
+                core = (fraction == 0) & (candidate < self.global_size)
+                regions[tighter] = 'transition'
+                regions[core & (candidate <= result)] = 'core'
             result = np.minimum(result, candidate)
         if not np.isfinite(result).all() or np.any(result <= 0):
             raise MeshBlocked('local_size_audit_incomplete: 유효한 요청 길이를 계산하지 못했습니다')
-        return result
+        return (result, regions) if with_regions else result
 
     def local_edge_ratio(self, mesh):
         if not self.features:

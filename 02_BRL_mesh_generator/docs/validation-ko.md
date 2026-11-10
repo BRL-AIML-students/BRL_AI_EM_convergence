@@ -1,5 +1,41 @@
 # 개발 검증과 유지보수 기록
 
+## 2026-11-10 실제 크기·전이·곡면 계측
+
+저장소 루트에서 `.venv/Scripts/python.exe -m tools.mesh_metrics_probe examples/sphere.json`을 실행한다. `--normal-grid 8`로 더 조밀한 표본을 비교할 수 있다. 개발 도구는 평소와 같은 생성·개선·검사를 거친 현재 메시를 읽고 JSON을 표준 출력으로 보낸다. 발행 조건과 ONELAB 액션은 현행 정책을 따른다.
+
+- **크기와 전이.** Node ID 쌍으로 중복 edge를 제거한다. 길이는 output unit이며, 면적 기반 인접 크기비는 공유 edge 양쪽 삼각형에서 계산한 √(큰 면적/작은 면적)이다. 같은 CAD 면 내부와 CAD 경계·seam을 분리한다. 전이의 p50/p95/p99/max와 1.5 초과 비율, 가장 큰 5개 쌍의 ID를 남긴다. 1.5는 BRL 관찰용이다. 이웃 크기비와 요청장 기울기의 구분은 [Borouchaki·Hecht·Frey (1998), §1, §3](https://www.ljll.fr/frey/publications/ijnme4398.pdf)를 참고한다.
+- **Radius ratio.** Gmsh 4.15.2의 `getElementQualities(..., 'gamma')`를 쓴다. 1차 삼각형에서는 정삼각형을 1로 하는 2r/R이다. 정삼각형 1, 직각이등변삼각형 약 0.828427을 확인했고, 생성한 판의 요소별 값을 독립적인 면적·변 길이 공식으로 대조했다. 0.50 미만 개수는 개발 검토용이다. [Gmsh API](https://gmsh.info/doc/texinfo/gmsh.html#gmsh_002fmodel_002fmesh_002fgetElementQualities)
+- **Efficiency index.** 각 edge의 길이를 국소 요청 크기로 정규화한다. 현행 continuous nominal field와 최종 곡률 요청의 최솟값으로 현의 양 끝·중점에서 1/h를 평가하고 Simpson 근사로 적분한다. CAD 경계·seam과 열린 경계 edge는 절대 길이 통계에 포함하고 국소 정규화 집계에서 제외한다. 분모가 평가된 unique edge 비율을 함께 출력한다. midpoint의 지배 요청으로 global/core/transition/curvature를 분리한다. 곡률 feedback의 공간적 변화는 별도 feature transition으로 분류되지 않는다. 지표는 exp(mean(min(ℓ, 1/ℓ)−1))이며 0.91 미만, 1/√2 미만과 √2 초과 비율을 기록한다. 0.91은 Frey·George 초판 §19.1.2의 경험값이다. [Mmg3d §7.2](https://www.math.u-bordeaux.fr/~dobrzyns/logiciels/Docmmg_english.pdf#page=13)
+- **요청장 교차 확인.** `MeshSizeFieldView`로 Box 예제의 339개 node에서 native background field를 평가했다. 전역 크기를 함께 적용하면 그 node에서 BRL nominal size와 최대 차이가 0이었다. 이 plugin은 선택한 view의 기존 위치에서 지정한 Gmsh field를 평가한다. 진단의 edge 중점 적분과 Python 곡률 callback은 별도로 계산하므로 지표의 분모를 BRL 명목 요청으로 명시한다. [Gmsh MeshSizeFieldView](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028MeshSizeFieldView_0029)
+- **곡면 편차.** BRL의 trim 투영과 Gmsh `getNormal`을 사용해 요소별 최대 거리 및 두 접평면 사이 각도를 구한 후 CAD face별 p95/max와 최댓값의 요소 ID·좌표를 집계한다. 기본은 edge 4분할 barycentric grid와 무게중심이다. 정확한 꼭짓점은 특이 법선 가능성 때문에 표본에서 제외하고, 나머지 표본의 무효 법선 개수를 별도 기록한다. 거리와 각도 모두 유한 표본의 mesh→CAD 방향 측정이다. 기존 10/19 거리 검사와 별도이고 CAD→mesh coverage는 후속 검증 범위다. `DiscretizationError`의 거리 계산은 유사하지만, 이번 비교에는 같은 face의 trim 투영점, 원래 요소 ID와 법선을 함께 사용한다. [Gmsh DiscretizationError](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028DiscretizationError_0029) · [HFSS Surface Approximation](https://ansyshelp.ansys.com/public/Views/Secured/Electronics/v261/en/Subsystems/HFSS/Content/HFSS/SurfaceApproximationSettings.htm)
+
+### 비교 실행
+
+Gmsh 4.15.2. `examples/`의 현행 입력을 사용했다. 표의 수치는 각 사례의 단일 실행이다. 국소 Box 별도 판에서도 core/transition/global의 실제 edge 중앙값 순서를 확인했다.
+
+| 사례 | 삼각형 | 국소 정규화 coverage | Efficiency index | Radius ratio min | 최대 전이비 | 표본 법선 최대 4분할 → 8분할 |
+|---|---:|---:|---:|---:|---:|---:|
+| plate | 148 | 86.6% | 0.929 | 0.883 | 1.231 | 0.000° (4분할) |
+| gaps | 2,380 | 93.5% | 0.966 | 0.815 | 1.325 | 0.000° (4분할) |
+| cylinder | 338 | 91.3% | 0.885 | 0.700 | 1.414 | 10.540° → 11.155° |
+| sphere | 1,106 | 98.9% | 0.944 | 0.668 | 1.331 | 6.477° → 6.794° |
+| open ogive | 861 | 94.6% | 0.901 | 0.455 | 1.848 | 46.817° → 50.272° |
+
+거리 허용값을 고정하고 전역 요청만 절반으로 변경한 단일 비교에서, 원통은 338→410면으로 늘고 각도 최댓값은 11.155°였다. 구는 1,106→774면으로 바뀌며 6.794°→8.147°였다. 열린 ogive는 861면과 50.272°가 동일했고 최대 위치는 z≈2.974 mm로 z=3 mm tip에 가까웠다. 8분할 ogive의 요소별 최대 각도는 약 20.2%가 10°, 약 7.2%가 15°를 초과했다. 따라서 법선 각도는 5°/10°/15° 초과 비율로 관찰하고, 10°를 공통 발행 기준으로 적용하는 결정은 보류한다. 형상별로 tip 주변의 기하 민감도와 재생성 성공률을 확인한 뒤 적용 범위를 결정한다.
+
+반경 1의 trimmed disk는 32면에서 4·8분할 모두 0°였다. 반경 0.15의 26-face fillet에서 거리 허용값 0.01, 전역 요청 0.15로 생성한 4,256면의 최대 각도는 19.855°→20.568°였다. 전역 요청 0.7의 초기 비교는 기존 AR·최소각 기준에서 차단됐다. 구의 방사 방향 및 원통의 축에 수직인 방사 방향을 이용해 기록된 최악 표본의 법선 각도를 해석적으로 대조했다.
+
+기준 commit `69fc0da`와 현재 소스에서 위 5개 입력을 각각 독립 NAS 발행했고, node/triangle 개수와 GRID·CTRIA3 카드 SHA-256이 모두 일치했다. 개발 계측 전용 4개 시험과 기존 sizing/curvature/quality/topology/inspection/publication 96개 시험이 통과했다. 현재 비교 범위는 표의 CAD와 표본 밀도에 한정된다.
+
+### ONELAB 품질 색상 표시
+
+아카이브의 `geometry_mesh/native_ui.py`는 AR과 문제 요소를 별도의 Gmsh `ElementData` view로 표시했다. 현행 ONELAB은 `BRL/04 Quality colors`에서 Off·ICN·Aspect ratio·Radius ratio를 선택하고 `Update quality colors`를 실행한다. ICN은 기존 `AnalyseMeshQuality` 어댑터로 ID와 값을 확인하고, AR과 radius ratio는 각각 기존 AR 계산과 Gmsh gamma를 읽는다. 공통 표시 코드는 현재 모델의 요소 ID에 스칼라 값을 대응시킨다. 발행 검사에서 사용하는 임시 ICN view와 화면용 view의 생명 주기는 분리한다. [Gmsh AnalyseMeshQuality](https://gmsh.info/doc/texinfo/gmsh.html#Plugin_0028AnalyseMeshQuality_0029) · [Gmsh ElementData API](https://gmsh.info/doc/texinfo/gmsh.html#gmsh_002fview_002faddHomogeneousModelData)
+
+ICN과 radius ratio는 고정 0–1 범례, AR은 1부터 3 이상인 현재 최댓값까지의 범례를 사용한다. 색상 view가 활성화된 동안 기본 mesh 면 채움을 끄고 view를 정리할 때 이전 설정을 복구한다. 설정 변경이나 새 생성·개선 결과를 가져올 때 기존 품질 view를 해제한다. 현재 mesh를 수동 수정했을 때는 표시 중인 view에 한해 약 1초 간격으로 현재 snapshot을 확인해 오래된 view를 해제한다. 같은 메시를 발행하는 동안에는 화면을 유지한다.
+
+Gmsh 4.15.2의 실제 FLTK 창에서 ONELAB API로 액션을 넣어 118개 삼각형 판의 ICN·AR·radius ratio를 렌더링했다. 세 지표의 화면과 범례를 비교했고, Off 적용 후 기본 화면 픽셀이 처음과 일치했다. Viridis에서 `ColormapSwap`은 시험 DLL의 범례 색에 영향을 주지 않아 AR에는 `ColormapInvert`를 적용하고 방향을 픽셀로 확인했다. 기존 native UI·worker·quality·개발 계측 대상 64개가 통과했고, 팔레트 조정 후 관련 7개를 다시 통과했다. FLTK 비교에는 API로 실행한 작은 판을 사용했으며, 큰 메시에서 view 활성화 상태의 UI 응답 시간은 측정하지 않았다.
+
 ## 2026-11-05 검사 작업 메모리·중복 계산 개선
 
 - 곡률 편차 계산을 `curvature_sampling.py`로 분리했다. 기본 19-node 격자의 기존 128요소 묶음은 유지하고, 높은 해상도는 총 표본 수에 따라 요소 묶음과 한 요소 내부 격자를 나눈다. 전체 표본 좌표·순서·최대 편차·동률 시 첫 표본의 local feedback seed를 유지한다. 입력 상한이나 축소된 검증 격자를 추가하지 않았다.

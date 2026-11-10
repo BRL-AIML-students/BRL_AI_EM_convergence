@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import math
 from pathlib import Path
 import sys
 import threading
+from time import monotonic
 
 import gmsh
 
@@ -16,7 +17,8 @@ from .config import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder
 from .engine import Scene, generate, prepare_generated, publish
 from .errors import ConfigurationError, MeshBlocked
 from .improvement import improve
-from .model import snapshot
+from .model import SurfaceMesh, assert_current, snapshot
+from .quality import add_quality_view
 from .sizing_config import Wave, Curvature
 
 PREFIX = 'BRL/'
@@ -56,6 +58,8 @@ PASSES = PREFIX + '31 Maximum improvement passes'
 QUALITY_RETRY = PREFIX + '32 Shape-only generation retry'
 OUTPUT = PREFIX + '40 Output folder'
 APPLIED_SIZE = PREFIX + '03 Applied global size'
+QUALITY_COLORS = PREFIX + '04 Quality colors'
+QUALITY_METRICS = ['Off', 'ICN', 'Aspect ratio', 'Radius ratio']
 CAP_ENABLED = PREFIX + 'Sizing/Use explicit size cap'
 WAVE_ENABLED = PREFIX + 'Sizing/Wavelength enabled'
 FREQUENCY = PREFIX + 'Sizing/Frequency Hz'
@@ -87,7 +91,8 @@ CURV_SAMPLING = PREFIX + 'Curvature/Sampling nodes per edge'
 CURV_VERIFY = PREFIX + 'Curvature/Verification nodes per edge'
 CURV_FEEDBACK = PREFIX + 'Curvature/Feedback'
 ACTIONS = {0: 'Idle', 1: 'Generate + publish NAS', 2: 'Generate mesh',
-           3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close', 6: 'Cancel current job'}
+           3: 'Improve current mesh', 4: 'Publish current mesh', 5: 'Close', 6: 'Cancel current job',
+           7: 'Update quality colors'}
 SHEET_DIRECTIONS = {'Not specified': 0, 'CAD normal +': 1, 'CAD normal -': -1}
 
 
@@ -109,6 +114,8 @@ def install_controls(config: Configuration) -> None:
         _parameter(ACTION, ACTIONS[0], choices=list(ACTIONS.values())),
         _parameter(STATUS, 'Ready: choose an Action', readOnly=True),
         _parameter(NAS_PATH, '', readOnly=True),
+        _parameter(QUALITY_COLORS, 'Off', choices=QUALITY_METRICS,
+                   help='지표를 선택한 뒤 Action → Update quality colors를 실행하세요.'),
         _parameter(KIND, config.to_dict()['geometry']['kind'], choices=GEOMETRY_CHOICES),
         _parameter(CAD_PATH, cad.path.as_posix() if cad else '', kind='file'),
         _parameter(LENGTH, plate.length, min=0), _parameter(WIDTH, plate.width, min=0),
@@ -336,11 +343,25 @@ def display_mesh(*, fit=False):
         gmsh.graphics.draw()
 
 
+@dataclass(frozen=True)
+class _QualityView:
+    tag: int
+    metric: str
+    mesh: SurfaceMesh
+    surface_faces: float
+
+    def is_present(self):
+        return (self.tag in gmsh.view.getTags() and
+                gmsh.view.option.getString(self.tag, 'Name') == f'BRL {self.metric}')
+
+
 class Controller:
     def __init__(self, base: Configuration, base_dir: Path):
         self.base, self.base_dir = base, base_dir
         self.scene: Scene | None = None
         self.last_mesh = None
+        self.quality_view: _QualityView | None = None
+        self.next_quality_check = 0.
         self.close_requested = False
         install_controls(base)
         self.visible_state = visibility_signature()
@@ -356,6 +377,61 @@ class Controller:
         if list(gmsh.onelab.getNumber(APPLIED_SIZE)) != [size]:
             gmsh.onelab.setNumber(APPLIED_SIZE, [size])
             self.ui_dirty = True
+
+    def _clear_quality_view(self):
+        view = self.quality_view
+        if view is None:
+            return
+        if view.is_present():
+            gmsh.view.remove(view.tag)
+        self.quality_view = None
+        # Avoid coplanar shading while the view is active; restore the user's
+        # previous face setting when releasing the overlay.
+        if gmsh.option.getNumber('Mesh.SurfaceFaces') == 0:
+            gmsh.option.setNumber('Mesh.SurfaceFaces', view.surface_faces)
+        self.ui_dirty = True
+        if gmsh.fltk.isAvailable():
+            gmsh.graphics.draw()
+
+    def _update_quality_view(self):
+        path = _string(NAS_PATH)
+        try:
+            self._clear_quality_view()
+            metric = _string(QUALITY_COLORS)
+            if metric not in QUALITY_METRICS:
+                raise ConfigurationError('지원하지 않는 품질 표시입니다')
+            if metric == 'Off':
+                self.status('Quality colors off', path)
+                return
+            if self.scene is None:
+                raise MeshBlocked('현재 생성 결과가 없습니다. 먼저 Generate mesh를 실행하세요')
+            self.scene.require_current(read_controls(self.base, self.base_dir))
+            mesh = snapshot(self.scene.membership)
+            surface_faces = gmsh.option.getNumber('Mesh.SurfaceFaces')
+            self.quality_view = _QualityView(add_quality_view(mesh, metric), metric, mesh, surface_faces)
+            gmsh.option.setNumber('Mesh.SurfaceFaces', 0)
+            self.next_quality_check = monotonic() + 1
+            if gmsh.fltk.isAvailable():
+                gmsh.graphics.draw()
+            self.ui_dirty = True
+            self.status(f'Quality colors: {metric}', path)
+        except Exception as exc:
+            self._clear_quality_view()
+            self.status(f'Quality colors blocked: {exc}', path)
+
+    def _check_quality_view(self):
+        view = self.quality_view
+        if view is None:
+            return
+        try:
+            assert_current(view.mesh)
+            if view.is_present():
+                return
+        except MeshBlocked:
+            pass
+        self._clear_quality_view()
+        if getattr(self, 'job', None) is None:
+            self.status('Quality colors cleared: mesh or view changed', _string(NAS_PATH))
 
     def invalidate_if_changed(self, *, deep=True) -> None:
         try:
@@ -373,10 +449,13 @@ class Controller:
             if not self.scene.cad.matches_config(current):
                 raise MeshBlocked('설정이 생성 시점과 다릅니다. 다시 생성하세요')
             if not deep:
+                if self.quality_view is not None and monotonic() >= self.next_quality_check:
+                    self.next_quality_check = monotonic() + 1
+                    self._check_quality_view()
                 return
             self.scene.require_current(current)
+            self._check_quality_view()
             if self.last_mesh is not None:
-                from .model import assert_current
                 try:
                     assert_current(self.last_mesh)
                 except MeshBlocked:
@@ -384,6 +463,7 @@ class Controller:
                     self.last_mesh = None
                     self.status('Mesh changed: next action checks the current mesh')
         except Exception as exc:
+            self._clear_quality_view()
             self.scene, self.last_mesh = None, None
             self.status(f'Regenerate required: {exc}')
 
@@ -408,6 +488,9 @@ class Controller:
             return
         if action == 0:
             return
+        if action == 7:
+            self._update_quality_view()
+            return
         self.invalidate_if_changed(deep=False)
         config = read_controls(self.base, self.base_dir)
         self._perform(action, config)
@@ -415,6 +498,8 @@ class Controller:
     def _perform(self, action: int, config: Configuration) -> None:
         self.invalidate_if_changed()
         self.status('Working')
+        if action in (1, 2, 3):
+            self._clear_quality_view()
         if action in (1, 2):
             self.scene, self.last_mesh = None, None
             gmsh.clear()  # This process owns the complete Gmsh session.
@@ -487,6 +572,9 @@ class AsyncController(Controller):
             return
         if action == 0:
             return
+        if action == 7:
+            self._update_quality_view()
+            return
         from .native_job import NativeJob
         self.invalidate_if_changed(deep=False)
         config = read_controls(self.base, self.base_dir)
@@ -496,14 +584,15 @@ class AsyncController(Controller):
     def _retain_previous_if_current(self):
         """Retain only a previously checked mesh still matching controls and Gmsh."""
         if self.scene is None or self.last_mesh is None:
+            self._clear_quality_view()
             self.scene, self.last_mesh = None, None
             return False
         try:
-            from .model import assert_current
             self.scene.require_current(read_controls(self.base, self.base_dir))
             assert_current(self.last_mesh)
             return True
         except Exception:
+            self._clear_quality_view()
             self.scene, self.last_mesh = None, None
             return False
 
@@ -560,7 +649,6 @@ class AsyncController(Controller):
                     return
                 if read_controls(self.base, self.base_dir) != job.config:
                     raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
-                from .model import assert_current
                 self.scene.require_current(job.config)
                 assert_current(self.last_mesh)
                 provenance.require_current(self.scene.generation_provenance, job.config, self.scene.cad.digest)
@@ -577,6 +665,8 @@ class AsyncController(Controller):
                 if read_controls(self.base, self.base_dir) != job.config:
                     raise MeshBlocked('작업 중 설정이 변경됐습니다. 다시 실행하세요')
                 adopting = True  # adopt can clear or mutate the current Gmsh model.
+                if job.action != 4:
+                    self._clear_quality_view()
                 self.scene, self.last_mesh = job.adopt(result, self.scene)
                 if job.action != 4:
                     display_mesh(fit=job.action in (1, 2))

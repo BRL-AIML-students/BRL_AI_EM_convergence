@@ -243,7 +243,7 @@ class CurvaturePlan:
                 self.tolerances[dim, tag] = delta
                 self.scales[dim, tag] = 1.
 
-    def size(self, dim, tag, point):
+    def size(self, dim, tag, point, *, record=True):
         if (dim, tag) not in self.tolerances:
             return self.cap
         # Gmsh can evaluate a size outside a face's trim while constructing it.
@@ -275,12 +275,13 @@ class CurvaturePlan:
         scale = self.scales[dim, tag] * (self._local_scale(tag, point)
                                         if dim == 2 and self.settings.feedback == 'local' else 1.)
         applied = required if scale == 1. else delta + (required-delta)*scale
-        old = self.requests.get((dim, tag), CurvatureRequest(self.cap, self.cap, 0))
-        divisions = (circle_divisions(1/k, self.tolerances[dim, tag])
-                     if dim == 1 and required < self.cap and k > 1/np.finfo(float).max
-                     and self.tolerances[dim, tag]*k < 1 else 0)
-        self.requests[dim, tag] = CurvatureRequest(min(old.required, required), min(old.applied, applied),
-                                                  max(old.circle_divisions, divisions))
+        if record:
+            old = self.requests.get((dim, tag), CurvatureRequest(self.cap, self.cap, 0))
+            divisions = (circle_divisions(1/k, self.tolerances[dim, tag])
+                         if dim == 1 and required < self.cap and k > 1/np.finfo(float).max
+                         and self.tolerances[dim, tag]*k < 1 else 0)
+            self.requests[dim, tag] = CurvatureRequest(min(old.required, required), min(old.applied, applied),
+                                                      max(old.circle_divisions, divisions))
         if applied < self.floor*(1-1e-12) or not math.isfinite(applied) or applied <= 0:
             raise MeshBlocked(f'curvature_minimum_conflict: required={required:g}, applied={applied:g}, '
                               f'minimum_size={self.floor:g}; 요구를 clamp하지 않습니다')

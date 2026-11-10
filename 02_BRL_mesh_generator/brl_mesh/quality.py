@@ -4,8 +4,49 @@ from __future__ import annotations
 import gmsh
 import numpy as np
 
+from .checks import measure_shape
 from .errors import MeshBlocked
 from .model import SurfaceMesh, assert_current
+
+
+def read_radius_ratio(mesh: SurfaceMesh) -> np.ndarray:
+    """Return Gmsh gamma (2r/R) in current first-order triangle ID order."""
+    assert_current(mesh)
+    values = np.asarray(gmsh.model.mesh.getElementQualities(mesh.element_ids, 'gamma'))
+    if (values.shape != mesh.element_ids.shape or not np.isfinite(values).all() or
+            np.any(values <= 0) or np.any(values > 1 + 1e-12)):
+        raise MeshBlocked('Gmsh gamma 값이 누락됐거나 1차 삼각형 radius ratio 범위를 벗어났습니다')
+    return values
+
+
+def add_quality_view(mesh: SurfaceMesh, metric: str) -> int:
+    """Create one Gmsh ElementData view for a current surface mesh."""
+    if metric == 'ICN':
+        icn = read_icn(mesh)
+        values = np.array([icn[int(tag)] for tag in mesh.element_ids])
+        if np.any(values <= 0):
+            raise MeshBlocked('Plugin ICN이 양의 유효 값을 반환하지 않았습니다')
+    elif metric == 'Aspect ratio':
+        assert_current(mesh)
+        values = measure_shape(mesh).aspect_ratios
+    elif metric == 'Radius ratio':
+        values = read_radius_ratio(mesh)
+    else:
+        raise ValueError(f'지원하지 않는 품질 표시입니다: {metric}')
+    is_ar = metric == 'Aspect ratio'
+    tag = gmsh.view.add(f'BRL {metric}')
+    try:
+        gmsh.view.addHomogeneousModelData(tag, 0, gmsh.model.getCurrent(), 'ElementData',
+                                          mesh.element_ids, values, numComponents=1)
+        for name, value in {'RangeType': 2, 'CustomMin': 1 if is_ar else 0,
+                            'CustomMax': max(3., float(values.max())) if is_ar else 1,
+                            'SaturateValues': 1, 'ColormapNumber': 23,
+                            'ColormapInvert': int(is_ar), 'ShowScale': 1, 'Visible': 1}.items():
+            gmsh.view.option.setNumber(tag, name, value)
+    except Exception:
+        gmsh.view.remove(tag)
+        raise
+    return tag
 
 
 def read_icn(mesh: SurfaceMesh) -> dict[int, float]:
