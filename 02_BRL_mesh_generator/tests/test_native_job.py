@@ -35,6 +35,30 @@ def controller(config):
         gmsh.finalize()
 
 
+def test_quality_colors_use_current_native_model_and_clear_on_worker_adoption(controller):
+    controller.perform(2)
+    wait(controller)
+    gmsh.onelab.setString(ui.QUALITY_COLORS, ['ICN'])
+    controller.perform(7)
+    assert controller.job is None and controller.quality_view is not None
+    tag = controller.quality_view.tag
+    controller.perform(4)
+    wait(controller)
+    assert list(gmsh.view.getTags()) == [tag]
+    path = gmsh.onelab.getString(ui.NAS_PATH)
+    assert Path(path[0]).is_file()
+    controller.perform(7)
+    assert gmsh.onelab.getString(ui.NAS_PATH) == path
+    controller.perform(3)
+    wait(controller)
+    assert controller.quality_view is None and not len(gmsh.view.getTags())
+    controller.perform(7)
+    assert controller.quality_view is not None
+    controller.perform(2)
+    wait(controller)
+    assert controller.quality_view is None and not len(gmsh.view.getTags())
+
+
 @pytest.mark.parametrize('example', ['plate', 'sphere', 'ogive', 'cube', 'cylinder_native', 'dihedral',
                                      'circle_223', 'thin_plate', 'gaps'])
 def test_worker_matches_cli_and_current_actions(tmp_path, example):

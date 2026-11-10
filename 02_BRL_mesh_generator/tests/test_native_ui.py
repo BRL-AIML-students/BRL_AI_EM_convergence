@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 
 from brl_mesh import native_ui as ui
+from brl_mesh.checks import measure_shape
 from brl_mesh.engine import run
 from brl_mesh.model import snapshot
+from brl_mesh.quality import read_icn
 from tests.support import distort_interior
 from tests.test_cad import cad_config, write_cad
 
@@ -28,6 +30,53 @@ def action(controller, code):
     controller.dispatch()
     assert gmsh.onelab.getString(ui.ACTION) == ['Idle']
     return gmsh.onelab.getString(ui.STATUS)[0]
+
+
+def test_quality_colors_map_current_elements_and_preserve_other_views(controller, config):
+    assert gmsh.onelab.getString(ui.QUALITY_COLORS) == ['Off']
+    assert 'off' in action(controller, 7)
+    gmsh.onelab.setString(ui.QUALITY_COLORS, ['ICN'])
+    assert 'blocked' in action(controller, 7)
+    action(controller, 2)
+    mesh = controller.last_mesh
+    sibling = gmsh.view.add('Unrelated view')
+    gmsh.model.mesh.setVisibility(mesh.element_ids[:1], 0)
+    visibility = gmsh.model.mesh.getVisibility(mesh.element_ids).copy()
+    original_faces = gmsh.option.getNumber('Mesh.SurfaceFaces')
+    metrics = {'ICN': read_icn(mesh),
+               'Aspect ratio': dict(zip(mesh.element_ids, measure_shape(mesh).aspect_ratios)),
+               'Radius ratio': dict(zip(mesh.element_ids, gmsh.model.mesh.getElementQualities(mesh.element_ids, 'gamma')))}
+    for metric, expected in metrics.items():
+        gmsh.onelab.setString(ui.QUALITY_COLORS, [metric])
+        assert action(controller, 7) == f'Quality colors: {metric}'
+        tag, = set(gmsh.view.getTags()) - {sibling}
+        kind, ids, values, _, components = gmsh.view.getHomogeneousModelData(tag, 0)
+        assert (kind, components) == ('ElementData', 1)
+        assert dict(zip(ids, values)) == pytest.approx(expected)
+        assert gmsh.view.option.getNumber(tag, 'CustomMin') == (1 if metric == 'Aspect ratio' else 0)
+        assert gmsh.view.option.getNumber(tag, 'CustomMax') == (3 if metric == 'Aspect ratio' else 1)
+        assert gmsh.view.option.getNumber(tag, 'ColormapInvert') == int(metric == 'Aspect ratio')
+        assert gmsh.option.getNumber('Mesh.SurfaceFaces') == 0
+        assert np.array_equal(gmsh.model.mesh.getVisibility(mesh.element_ids), visibility)
+    gmsh.onelab.setString(ui.QUALITY_COLORS, ['Off'])
+    assert 'off' in action(controller, 7)
+    assert list(gmsh.view.getTags()) == [sibling]
+    assert gmsh.option.getNumber('Mesh.SurfaceFaces') == original_faces
+    assert not config.output_dir.exists()
+
+
+def test_quality_colors_clear_after_manual_mesh_edit_and_configuration_change(controller):
+    action(controller, 2)
+    gmsh.onelab.setString(ui.QUALITY_COLORS, ['Aspect ratio'])
+    action(controller, 7)
+    distort_interior(controller.scene.membership)
+    controller.next_quality_check = 0
+    controller.invalidate_if_changed(deep=False)
+    assert controller.quality_view is None and not len(gmsh.view.getTags())
+    assert action(controller, 7) == 'Quality colors: Aspect ratio'
+    gmsh.onelab.setNumber(ui.TARGET, [.3])
+    controller.invalidate_if_changed(deep=False)
+    assert controller.quality_view is None and not len(gmsh.view.getTags())
 
 
 @pytest.mark.parametrize('wave', [None, 'custom'])
