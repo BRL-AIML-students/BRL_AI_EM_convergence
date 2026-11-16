@@ -1,3 +1,3 @@
-"""Independent BRL mesh generator. Stage 1 supports planar rectangular plates."""
+"""BRL surface mesh generation, configurable quality checks and verified NAS output."""
 
 __version__ = "0.1.0"

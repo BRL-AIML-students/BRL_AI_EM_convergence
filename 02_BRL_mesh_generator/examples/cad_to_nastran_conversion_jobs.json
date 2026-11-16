@@ -1,0 +1,15 @@
+{
+  "default_options": {
+    "length_unit": "mm",
+    "output_unit": "m",
+    "target_size": 0.001,
+    "curvature": "auto",
+    "curvature_tolerance_ratio": 0.02
+  },
+  "jobs": [
+    {
+      "cad_path": "cad/cylinder.brep",
+      "nas_path": "../outputs/cad-to-nas/cylinder.nas"
+    }
+  ]
+}

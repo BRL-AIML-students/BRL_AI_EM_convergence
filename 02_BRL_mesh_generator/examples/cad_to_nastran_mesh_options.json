@@ -1,0 +1,60 @@
+{
+  "length_unit": "mm",
+  "output_unit": "m",
+  "target_size": 0.001,
+  "mesh_frequency_hz": null,
+  "elements_per_wavelength": 10,
+  "relative_permittivity": 1,
+  "relative_permeability": 1,
+  "minimum_size": null,
+  "short_edges": "auto",
+  "widths": "auto",
+  "gaps": false,
+  "local": {
+    "short_edges": {
+      "divisions": 3
+    },
+    "widths": {
+      "divisions": 3
+    },
+    "gaps": {
+      "divisions": 3,
+      "pairs": []
+    },
+    "curves": [],
+    "boxes": [],
+    "growth_rate": 0.3,
+    "sampling_fraction": 0.25
+  },
+  "curvature": "auto",
+  "curvature_absolute_tolerance": null,
+  "curvature_relative_tolerance": null,
+  "curvature_tolerance_ratio": 0.02,
+  "curvature_max_iterations": 3,
+  "curvature_sampling_nodes": 10,
+  "curvature_verification_nodes": 19,
+  "curvature_feedback": "entity",
+  "improvement": true,
+  "max_passes": 3,
+  "quality_retry": "none",
+  "sheet_normal": null,
+  "sheet_normals": {},
+  "separated_surfaces": [],
+  "protected_gap": null,
+  "target_size_enabled": true,
+  "wavelength_sizing_enabled": true,
+  "minimum_size_enabled": true,
+  "local_size_fields_enabled": true,
+  "local_curves_enabled": true,
+  "local_boxes_enabled": true,
+  "quality": {
+    "icn_enabled": true,
+    "icn_minimum": 0.0,
+    "aspect_ratio_enabled": true,
+    "aspect_ratio_maximum": 3.0,
+    "minimum_angle_enabled": true,
+    "minimum_angle_degrees": 20.0,
+    "radius_ratio_enabled": false,
+    "radius_ratio_minimum": 0.5
+  }
+}

@@ -1,0 +1,153 @@
+"""One current inspection shared by improvement and publication."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+import gmsh
+import numpy as np
+
+from .triangle_shape_checks import ShapeValues, _measure_shape
+from .mesh_generator_errors import MeshBlocked
+from .surface_mesh_snapshot import SurfaceMesh, assert_current, surface_groups
+from .cad_normal_verification import NormalValues, _inspect_normals
+from .cad_geometry_preservation import GeometryValues, _measure_geometry
+from .gmsh_quality_metrics import read_icn, read_radius_ratio
+from .mesh_quality_settings import QualitySettings
+from .surface_mesh_topology import BoundaryIntent, TopologyValues, inspect_topology
+from .mesh_validation_issues import Issue, require_pass
+
+
+@dataclass(frozen=True)
+class MeshContract:
+    boundary: BoundaryIntent
+    sheet_signs: dict[int, int]
+    target_size: float
+    geometry_check: Callable[[SurfaceMesh], None] | None = None
+    local_size_measure: Callable[[SurfaceMesh], float] | None = None
+    deviation_measure: Callable[[SurfaceMesh], float] | None = None
+    quality: QualitySettings = QualitySettings()
+
+
+@dataclass(frozen=True)
+class Inspection:
+    shape: ShapeValues
+    icn: dict[int, float]
+    topology: TopologyValues
+    normals: NormalValues
+    geometry: GeometryValues
+    issues: tuple[Issue, ...]
+    edge_max_to_target: float
+    coordinate_noise: float
+    local_edge_max_to_target: float = 0.
+    deviation_ratio_max: float = 0.
+    radius_ratios: np.ndarray | None = None
+
+    @property
+    def violating_count(self):
+        violations = self.shape.violations.copy()
+        policy = self.shape.settings
+        if policy.icn_enabled and self.icn:
+            violations |= np.fromiter(self.icn.values(), dtype=float) < policy.icn_minimum
+        if policy.radius_ratio_enabled and self.radius_ratios is not None:
+            violations |= self.radius_ratios < policy.radius_ratio_minimum
+        return int(np.count_nonzero(violations))
+
+    @property
+    def minimum_icn(self) -> float:
+        return min(self.icn.values()) if self.icn else float('-inf')
+
+    def require_nonshape_pass(self) -> None:
+        require_pass(self.issues)
+
+    def require_pass(self) -> None:
+        self.require_nonshape_pass()
+        self.shape.require_pass()
+        policy = self.shape.settings
+        if policy.icn_enabled and (not self.icn or self.minimum_icn < policy.icn_minimum):
+            raise MeshBlocked(f'ICN 최소값이 설정 기준 {policy.icn_minimum:g} 미만입니다')
+        if policy.radius_ratio_enabled and (self.radius_ratios is None or
+                float(self.radius_ratios.min()) < policy.radius_ratio_minimum):
+            raise MeshBlocked(f'radius ratio 최소값이 설정 기준 {policy.radius_ratio_minimum:g} 미만입니다')
+
+
+def cad_boundary_intent(expected_components: int, **kwargs) -> BoundaryIntent:
+    """Expected open edges come from CAD curves, never the observed triangle holes."""
+    try:
+        boundary_curves = gmsh.model.getBoundary(gmsh.model.getEntities(2), combined=True, oriented=False)
+        edges = set()
+        for dimension, curve in boundary_curves:
+            if dimension != 1:
+                raise ValueError('surface 경계 차원이 유효하지 않습니다')
+            types, _, blocks = gmsh.model.mesh.getElements(1, abs(curve))
+            for kind, nodes in zip(types, blocks):
+                if kind != 1 and len(nodes):
+                    raise ValueError('1차 경계 line만 지원합니다')
+                edges.update(tuple(sorted(map(int, edge))) for edge in np.asarray(nodes).reshape(-1, 2))
+        return BoundaryIntent(frozenset(edges), expected_components, **kwargs)
+    except Exception as exc:
+        raise MeshBlocked(f'CAD의 예상 경계를 구성하지 못했습니다: {exc}') from exc
+
+
+def inspect_mesh(mesh: SurfaceMesh, contract: MeshContract) -> Inspection:
+    mesh.validate()
+    assert_current(mesh)
+    # Private, per-call arrays: no cached verdict survives mutable input edits.
+    # Helpers receive read-only arrays after this public entry's validation.
+    xyz = mesh.triangles()
+    cross = np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0])
+    magnitude = np.linalg.norm(cross, axis=1)
+    for array in (xyz, cross, magnitude):
+        array.setflags(write=False)
+    shape = _measure_shape(xyz, contract.quality)
+    topology = inspect_topology(mesh, contract.boundary)
+    groups = surface_groups(mesh.surface_tags)
+    normals = _inspect_normals(mesh, contract.sheet_signs, xyz, cross, magnitude, groups=groups)
+    geometry = _measure_geometry(mesh, xyz, cross, magnitude, groups=groups)
+    issues = list(topology.issues + normals.issues + geometry.issues)
+    if not np.isfinite(contract.target_size) or contract.target_size <= 0:
+        issues.append(Issue('invalid_target', '목표 길이가 유효하지 않습니다', 'incomplete'))
+    if contract.geometry_check is not None:
+        try:
+            contract.geometry_check(mesh)
+        except MeshBlocked as exc:
+            issues.append(Issue('geometry_constraints', str(exc)))
+        except Exception as exc:
+            issues.append(Issue('geometry_incomplete', str(exc), 'incomplete'))
+    local_ratio = 0.
+    deviation_ratio = 0.
+    if not issues and contract.deviation_measure is not None:
+        try:
+            deviation_ratio = contract.deviation_measure(mesh)
+            if not np.isfinite(deviation_ratio) or deviation_ratio < 0:
+                raise ValueError('CAD 편차 비율이 유효하지 않습니다')
+            if deviation_ratio > 1+1e-10:
+                issues.append(Issue('cad_deviation', f'현재 mesh의 표본 편차/허용값={deviation_ratio:g} > 1'))
+        except Exception as exc:
+            issues.append(Issue('cad_deviation_incomplete', str(exc), 'incomplete'))
+    if not issues and contract.local_size_measure is not None:
+        try:
+            local_ratio = contract.local_size_measure(mesh)
+            if not np.isfinite(local_ratio) or local_ratio < 0:
+                raise ValueError('국소 크기 비율이 유효하지 않습니다')
+        except Exception as exc:
+            issues.append(Issue('local_size_incomplete', str(exc), 'incomplete'))
+    icn = {}
+    radius_ratios = None
+    if not issues and contract.quality.icn_enabled:
+        try:
+            measured = read_icn(mesh)
+            icn = {int(tag): measured[int(tag)] for tag in mesh.element_ids}
+            if any(value <= 0 for value in icn.values()):
+                issues.append(Issue('element_validity', 'Plugin ICN이 양의 유효 값을 반환하지 않았습니다'))
+        except Exception as exc:
+            issues.append(Issue('quality_incomplete', str(exc), 'incomplete'))
+    if not issues and contract.quality.radius_ratio_enabled:
+        try:
+            radius_ratios = read_radius_ratio(mesh)
+        except Exception as exc:
+            issues.append(Issue('radius_ratio_incomplete', str(exc), 'incomplete'))
+    longest = max(float(np.linalg.norm(xyz[:, (i + 1) % 3] - xyz[:, i], axis=1).max()) for i in range(3))
+    ratio = longest / contract.target_size if np.isfinite(contract.target_size) and contract.target_size > 0 else float('inf')
+    noise = 64 * np.finfo(float).eps * max(float(np.max(np.abs(mesh.coordinates))), longest)
+    return Inspection(shape, icn, topology, normals, geometry, tuple(issues), ratio, noise, local_ratio, deviation_ratio, radius_ratios)

@@ -6,8 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-from .config import Configuration
-from .errors import MeshBlocked
+from .mesh_generator_configuration import Configuration
+from .mesh_generator_errors import MeshBlocked
 
 PROTOCOL = 'BRL_RESULT '
 WARNING = 'BRL_WARNING '
@@ -19,7 +19,7 @@ def error_message(exc):
 
 def execute(configuration: str) -> tuple[int, dict]:
     try:
-        from .engine import run
+        from .surface_mesh_generation import run
         result = run(Configuration.load(configuration))
         for warning in result.warnings:
             print(WARNING + json.dumps(warning, ensure_ascii=False), file=sys.stderr)
@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     # OCC emits native import notices even when General.Terminal is zero.
     # Capture the process pipes instead of manipulating DLL/native file handles.
     try:
-        completed = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-m', 'brl_mesh.cli_worker',
+        completed = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-m', 'brl_mesh.command_line_mesh_worker',
                                     str(Path(args.configuration).resolve())],
                                    cwd=Path(__file__).resolve().parent.parent,
                                    capture_output=True, text=True, encoding='utf-8')

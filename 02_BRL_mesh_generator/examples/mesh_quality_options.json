@@ -1,0 +1,10 @@
+{
+  "icn_enabled": true,
+  "icn_minimum": 0.0,
+  "aspect_ratio_enabled": true,
+  "aspect_ratio_maximum": 3.0,
+  "minimum_angle_enabled": true,
+  "minimum_angle_degrees": 20.0,
+  "radius_ratio_enabled": false,
+  "radius_ratio_minimum": 0.5
+}

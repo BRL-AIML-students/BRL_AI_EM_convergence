@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from brl_mesh.config import Configuration
-from brl_mesh.model import SurfaceMesh
+from brl_mesh.mesh_generator_configuration import Configuration
+from brl_mesh.surface_mesh_snapshot import SurfaceMesh
 
 
 @pytest.fixture
