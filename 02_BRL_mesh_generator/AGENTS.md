@@ -1,11 +1,12 @@
 # 02_BRL_mesh_generator 작업 지침
 
-- 현재 사용 흐름·기본값·범위는 `docs/mesh-generator-guide-ko.html`, 개발 근거·환경·이력은 `docs/validation-ko.md`를 따른다. 문서와 코드를 함께 갱신한다.
+- 현재 사용법·설정 기본값·MoM 연동은 `docs/01_사용방법과설정.html`, 구조·코드 역할·알고리즘은 `docs/02_구조와코드해설.html`, 개발 근거·환경·이력은 `docs/03_개발검증과변경이력.html`을 따른다. 문서와 코드를 함께 갱신한다.
+- 이전 파일명 대응표는 `docs/02_구조와코드해설.html#file-migration`에 있다. 메쉬용 주파수는 `mesh_frequency_hz`로 독립 지정하고 MoM 변수에서 읽지 않는다.
 - 기존 `99_archive/BRL_2026-10-19`는 읽기 전용 보관 자료다. 기존 runtime을 import하거나 보관된 환경·캐시에 의존하지 않는다.
 - Strict schema를 유지한다. 과거 입력·Action·보고서 구조의 호환 계층을 기본으로 추가하지 않고 미지원 입력을 명확히 거부한다.
-- Gmsh CAD/mesh API·size field와 `AnalyseMeshQuality` ICN을 사용한다. 사용하지 않는 Jacobian·IGE는 켜지 않는다. Plugin/API의 의미·수치가 같다고 가정하거나 실패 시 조용히 대체하지 않는다.
-- 현재 표면 요소에 `DimensionOfElements=2`, `Recompute=1`을 명시한다. 결과 element ID 전체 대응·유한 양의 값·이번 view만 정리·기존 visibility 보존을 확인한다.
-- AR≤3·최소각≥20° 정책을 임의 ICN 하한으로 환산하지 않는다. Topology·예상 경계·solid outward/sheet 기준 법선은 별도 검사한다.
+- Gmsh CAD/mesh API·size field를 사용하고, ICN 평가는 `quality.icn_enabled`가 켜졌을 때 `AnalyseMeshQuality`로 수행한다. 명시적 ICN 색상 표시는 별도다. 사용하지 않는 Jacobian·IGE는 켜지 않는다. Plugin/API의 의미·수치가 같다고 가정하거나 실패 시 조용히 대체하지 않는다.
+- ICN 호출 시 현재 표면 요소에 `DimensionOfElements=2`, `Recompute=1`을 명시한다. 결과 element ID 전체 대응·유한 양의 값·이번 view만 정리·기존 visibility 보존을 확인한다.
+- ICN·AR·최소각·radius ratio는 `quality`에서 개별 활성화·기준값을 지정한다. 기본값 AR≤3·최소각≥20°를 임의 ICN 하한으로 환산하지 않는다. Topology·예상 경계·solid outward/sheet 기준 법선·퇴화 요소·독립 NAS 검증은 평가 스위치와 별도로 유지한다.
 - 개선의 연결·ID·PID·entity·경계 node/parameter 불변량과 품질·기하·크기·활성 편차 비악화를 보존한다. 후보 거부는 정확한 rollback 또는 발행 차단으로 처리한다.
 - CAD·설정·field·경계 참조가 바뀌면 재생성을 요구하고 현재 메쉬를 재검사한다. 발행은 임시 NAS·독립 pyNastran 읽기·좌표/ID/connectivity/PID 대조 후 수행한다.
 - 단위·의도한 열린 경계·분리 gap을 보존한다. 요청 길이와 실제 edge 길이, 기하 검사와 EM 정확도을 구분한다.
@@ -18,6 +19,6 @@
 - 사용자 지정 저장소는 `https://github.com/BRL-AIML-students/BRL_AI_EM_convergence.git`, 새 모듈 경로는 `02_BRL_mesh_generator/`다. 이후 수정·PR은 이 저장소를 사용한다.
 - Merge는 명시적으로 요청받은 범위에서 수행한다. 사용자가 merge까지 요청하면 merge commit으로 병합한 뒤 해당 PR의 원격 작업 branch와 대응하는 로컬 작업 branch를 삭제한다. main과 무관한 branch는 삭제하지 않는다. 2026-10-20 사용자가 이 규칙과 UI 수정·native 형상 확장의 일괄 merge를 명시했다.
 - 로컬에서 변경·검증한 뒤 요청된 PR을 작성/갱신한다. 문서 설명·로컬 저장 요청만으로 원격 게시를 자동 실행하지 않는다.
-- 독립 source 이력과 게시 이력은 parent/SHA가 다르다. Source branch를 원격에 강제 push하지 않는다. 상세 경로·PR 기록은 `docs/validation-ko.md`의 GitHub 절을 먼저 확인한다.
+- 독립 source 이력과 게시 이력은 parent/SHA가 다르다. Source branch를 원격에 강제 push하지 않는다. 상세 경로·PR 기록은 `docs/03_개발검증과변경이력.html`의 GitHub 절을 먼저 확인한다.
 - `.cache/github-delivery`는 별도 Git checkout이다. 이 경로를 포함한 cache 전체를 무심코 삭제하거나 .git/가상환경을 이동하지 않는다. 이번 guide 작업은 구조 이동을 포함하지 않는다.
 - 활성 작업의 모델을 유지한다. 외부 모델 위임·과금·reset credit 소비를 자동으로 하지 않는다.
