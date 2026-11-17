@@ -257,7 +257,12 @@ def test_actual_cli_local_fields_and_floor_conflict_use_minimal_status(tmp_path)
     assert completed.returncode==0,completed.stderr
     state=json.loads(completed.stdout)
     from pathlib import Path
-    assert sorted(p.name for p in Path(state['nas_path']).parent.iterdir())==['mesh.nas']
+    assert sorted(p.name for p in Path(state['nas_path']).parent.iterdir())==['mesh.nas', 'mesh_quality.html']
+    import hashlib
+    report=Path(state['quality_report_path'])
+    digest=hashlib.sha256(Path(state['nas_path']).read_bytes()).hexdigest()
+    assert report.is_file() and digest == state['quality_summary']['nas_sha256']
+    assert digest in report.read_text(encoding='utf-8')
     old=Path(state['nas_path']).read_bytes()
     value=config.to_dict();value['mesh']['minimum_size']=.3
     source.write_text(json.dumps(value),encoding='utf-8')

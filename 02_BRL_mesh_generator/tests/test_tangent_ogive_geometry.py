@@ -12,7 +12,7 @@ from brl_mesh.surface_mesh_generation import mesh_model, run
 from brl_mesh.mesh_generator_errors import ConfigurationError
 from brl_mesh.mesh_contract_inspection import inspect_mesh
 from brl_mesh.surface_mesh_snapshot import snapshot
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from tests.size_field_test_helpers import write_case
 from tests.curved_geometry_test_helpers import write_curved
 
@@ -61,7 +61,7 @@ def test_native_ogive_actual_geometry_and_nas(tmp_path, t):
             tag = gmsh.model.getEntities(3)[0][1]
             assert gmsh.model.occ.getMass(3, tag) == pytest.approx(expected, rel=1e-9)
     result = run(config)
-    assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas'}
+    assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas', 'mesh_quality.html'}
 
 
 @pytest.mark.parametrize('unit,scale', [('mm', 1), ('m', .001)])
@@ -144,4 +144,4 @@ def test_complex_imported_fillet_repeats_coordinates_connectivity_and_pid(tmp_pa
     assert first.triangle_count == second.triangle_count > 0
     assert {int(line.split(',')[2]) for line in first.nas_path.read_text().splitlines()
             if line.startswith('CTRIA3,')} == set(range(1, 27))
-    assert {p.name for folder in config.output_dir.iterdir() for p in folder.iterdir()} == {'mesh.nas'}
+    assert {p.name for folder in config.output_dir.iterdir() for p in folder.iterdir()} == {'mesh.nas', 'mesh_quality.html'}

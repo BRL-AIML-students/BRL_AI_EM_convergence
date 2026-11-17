@@ -5,7 +5,7 @@ D/L/t retain their geometric meaning; no STEP intermediate or archive imports.
 import math
 import sys
 
-from .mesh_generator_errors import ConfigurationError, MeshBlocked
+from ..mesh_generator_errors import ConfigurationError, MeshBlocked
 
 
 def parameters(geometry, scale):

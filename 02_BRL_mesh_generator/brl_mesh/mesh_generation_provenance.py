@@ -51,9 +51,9 @@ def effective_config(config):
 
 
 def source_hash():
-    """Hash relative names and bytes of all direct brl_mesh/*.py source files."""
+    """Hash relative names and bytes of all brl_mesh Python source files recursively."""
     digest = hashlib.sha256()
-    for path in sorted((_ROOT / 'brl_mesh').glob('*.py')):
+    for path in sorted((_ROOT / 'brl_mesh').rglob('*.py')):
         name = path.relative_to(_ROOT).as_posix().encode('utf-8')
         content = path.read_bytes()
         for value in (name, content):
@@ -82,7 +82,7 @@ def validate_schema(data):
                 'source', 'generator_version', 'gmsh_version', 'configured_options',
                 'actual_algorithm', 'actual_threads', 'improvement_history'}:
             raise ValueError('provenance keys')
-        if type(data['schema']) is not int or data['schema'] != 4:
+        if type(data['schema']) is not int or data['schema'] != 5:
             raise ValueError('provenance schema')
         config = data['effective_config']
         if (type(config) is not dict or set(config) != {'schema_version', 'geometry', 'length_unit',
@@ -98,7 +98,7 @@ def validate_schema(data):
         source = data['source']
         if (type(source) is not dict or set(source) != {'scope', 'sha256', 'base_commit',
                 'git_status_scope', 'brl_mesh_dirty'} or source['scope'] !=
-                'direct brl_mesh/*.py; length-prefixed relative paths and bytes'
+                'recursive brl_mesh/**/*.py; length-prefixed relative paths and bytes'
                 or not valid_hash(source['sha256'])
                 or (source['base_commit'] is not None and not valid_hash(source['base_commit'], (40, 64)))
                 or source['git_status_scope'] not in ('unavailable', 'brl_mesh tracked and unignored untracked files')
@@ -122,8 +122,8 @@ def validate_schema(data):
 
 
 def capture(config, cad_digest):
-    data = {'schema': 4, 'effective_config': effective_config(config), 'cad_source_sha256': cad_digest,
-            'source': {'scope': 'direct brl_mesh/*.py; length-prefixed relative paths and bytes',
+    data = {'schema': 5, 'effective_config': effective_config(config), 'cad_source_sha256': cad_digest,
+            'source': {'scope': 'recursive brl_mesh/**/*.py; length-prefixed relative paths and bytes',
                        'sha256': source_hash(), **git_state()},
             'generator_version': __version__, 'gmsh_version': gmsh.__version__,
             'configured_options': {name: gmsh.option.getNumber(name) for name in _OPTIONS},

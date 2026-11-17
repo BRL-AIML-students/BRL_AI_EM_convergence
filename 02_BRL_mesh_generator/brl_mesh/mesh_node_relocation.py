@@ -91,17 +91,19 @@ def _not_increased(old: float, new: float, absolute_tolerance: float = 0.0) -> b
 
 def _acceptable(before: Inspection, after: Inspection) -> bool:
     policy = before.shape.settings
-    if after.issues or (policy.icn_enabled and not after.icn):
+    if after.issues or (policy.icn_enabled and not after.icn) or (policy.ige_enabled and not after.ige):
         return False
     shape_preserved = ((not policy.aspect_ratio_enabled or
                         _not_increased(before.shape.aspect_ratio_max, after.shape.aspect_ratio_max))
                        and (not policy.minimum_angle_enabled or
                         _not_increased(-before.shape.minimum_angle_deg, -after.shape.minimum_angle_deg)))
     icn_preserved = (not policy.icn_enabled or after.minimum_icn >= before.minimum_icn - 1e-12)
+    ige_preserved = (not policy.ige_enabled or after.minimum_ige >= before.minimum_ige - 1e-12)
     radius_preserved = (not policy.radius_ratio_enabled or
                         (before.radius_ratios is not None and after.radius_ratios is not None and
                          _not_increased(-float(before.radius_ratios.min()), -float(after.radius_ratios.min()))))
-    metric_improved = ((policy.icn_enabled and after.minimum_icn > before.minimum_icn + 1e-12)
+    metric_improved = ((policy.ige_enabled and after.minimum_ige > before.minimum_ige + 1e-12)
+                       or (policy.icn_enabled and after.minimum_icn > before.minimum_icn + 1e-12)
                        or (not policy.icn_enabled and policy.aspect_ratio_enabled and after.shape.aspect_ratio_max < before.shape.aspect_ratio_max - 1e-12)
                        or (not policy.icn_enabled and policy.minimum_angle_enabled and after.shape.minimum_angle_deg > before.shape.minimum_angle_deg + 1e-12)
                        or (not policy.icn_enabled and policy.radius_ratio_enabled and before.radius_ratios is not None and after.radius_ratios is not None
@@ -126,7 +128,7 @@ def _acceptable(before: Inspection, after: Inspection) -> bool:
         geometry_preserved = (geometry_preserved and new_volume is not None
                               and _not_increased(old_volume, new_volume, 64 * np.finfo(float).eps))
     return (shape_preserved and rank_improved and preserved and geometry_preserved
-            and icn_preserved and radius_preserved)
+            and icn_preserved and ige_preserved and radius_preserved)
 
 
 @dataclass(frozen=True)

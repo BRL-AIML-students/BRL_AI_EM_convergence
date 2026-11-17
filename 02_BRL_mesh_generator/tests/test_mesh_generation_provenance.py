@@ -30,15 +30,15 @@ def test_missing_generation_provenance_is_rejected(config):
         provenance.require_current(None, config, None)
 
 
-def test_schema4_requires_canonical_curvature_feedback(config, monkeypatch):
+def test_schema5_requires_canonical_curvature_feedback(config, monkeypatch):
     from brl_mesh.mesh_size_settings import Curvature
     monkeypatch.setattr(provenance.gmsh.option, 'getNumber', lambda name: 6 if name == 'Mesh.Algorithm' else 1)
     configured = replace(config, sizing=replace(config.sizing, curvature=Curvature(absolute_tolerance=.01)))
     data = json.loads(provenance.capture(configured, None))
-    assert data['schema'] == 4
+    assert data['schema'] == 5
     assert data['effective_config']['mesh']['curvature']['feedback'] == 'entity'
     old = json.loads(provenance.canonical(data))
-    old['schema'] = 2
+    old['schema'] = 4
     with pytest.raises(MeshBlocked, match='schema'):
         provenance.validate_schema(old)
     del data['effective_config']['mesh']['curvature']['feedback']
@@ -102,3 +102,31 @@ def test_equivalent_integer_and_float_configurations_are_normalized(config, tmp_
     provenance.require_current(captured, floating, None)
     assert provenance.effective_config(integer) == provenance.effective_config(floating)
     assert provenance.canonical(provenance.effective_config(integer)) == provenance.canonical(provenance.effective_config(floating))
+
+
+def test_source_hash_covers_nested_python_and_ignores_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(provenance, '_ROOT', tmp_path)
+    package = tmp_path / 'brl_mesh'
+    nested = package / 'builtin_geometry'
+    nested.mkdir(parents=True)
+    (package / '__init__.py').write_text('version = 1', encoding='utf-8')
+    source = nested / 'geometry.py'
+    source.write_text('radius = 1', encoding='utf-8')
+    baseline = provenance.source_hash()
+    assert provenance.source_hash() == baseline
+    cache = nested / '__pycache__'
+    cache.mkdir()
+    (cache / 'geometry.pyc').write_bytes(b'cache')
+    assert provenance.source_hash() == baseline
+    source.write_text('radius = 2', encoding='utf-8')
+    changed = provenance.source_hash()
+    assert changed != baseline
+    added = nested / 'extra.py'
+    added.write_text('value = 1', encoding='utf-8')
+    added_hash = provenance.source_hash()
+    assert added_hash != changed
+    renamed = nested / 'renamed.py'
+    added.rename(renamed)
+    assert provenance.source_hash() != added_hash
+    renamed.unlink()
+    assert provenance.source_hash() == changed

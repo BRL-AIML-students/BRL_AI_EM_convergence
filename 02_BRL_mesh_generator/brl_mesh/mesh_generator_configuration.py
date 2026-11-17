@@ -177,10 +177,10 @@ class Configuration:
             if not all(math.isfinite(x) for x in scaled) or min(scaled[:2]) <= 0:
                 raise ConfigurationError("단위 변환 결과가 유효하지 않습니다")
         elif isinstance(geometry, Ogive):
-            from .tangent_ogive_geometry import parameters
+            from .builtin_geometry.tangent_ogive_geometry import parameters
             parameters(geometry, config.unit_scale)
         elif isinstance(geometry, (Sphere, Cube, Cylinder, Dihedral)):
-            from .analytic_primitive_geometry import parameters
+            from .builtin_geometry.analytic_primitive_geometry import parameters
             parameters(geometry, config.unit_scale)
         if sizing.local.widths.enabled and isinstance(geometry, (Ogive, Sphere, Cylinder)):
             raise ConfigurationError('width_unsupported: 이 형상은 곡면입니다. Widths enabled를 해제하고 Curvature를 사용하세요')

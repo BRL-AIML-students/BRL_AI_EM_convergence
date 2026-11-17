@@ -16,10 +16,13 @@ class QualitySettings:
     radius_ratio_enabled: bool = False
     radius_ratio_minimum: float = 0.5
 
+    ige_enabled: bool = False
+    ige_minimum: float = 0.0
+
     def __post_init__(self):
-        for key in ('icn_enabled', 'aspect_ratio_enabled', 'minimum_angle_enabled', 'radius_ratio_enabled'):
+        for key in ('icn_enabled', 'aspect_ratio_enabled', 'minimum_angle_enabled', 'radius_ratio_enabled', 'ige_enabled'):
             boolean(getattr(self, key), 'quality.' + key)
-        for key in ('icn_minimum', 'radius_ratio_minimum'):
+        for key in ('icn_minimum', 'radius_ratio_minimum', 'ige_minimum'):
             value = number(getattr(self, key), 'quality.' + key)
             if not 0 <= value <= 1:
                 raise ConfigurationError(f'quality.{key}: 0 이상 1 이하여야 합니다')

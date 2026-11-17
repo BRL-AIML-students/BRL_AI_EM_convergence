@@ -12,14 +12,14 @@ from time import monotonic
 
 import gmsh
 
-from . import mesh_generation_provenance as provenance
-from .mesh_generator_configuration import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder, Dihedral
-from .surface_mesh_generation import Scene, generate, prepare_generated, publish
-from .mesh_generator_errors import ConfigurationError, MeshBlocked
-from .mesh_node_relocation import improve
-from .surface_mesh_snapshot import SurfaceMesh, assert_current, snapshot
-from .gmsh_quality_metrics import add_quality_view
-from .mesh_size_settings import Wave, Curvature
+from .. import mesh_generation_provenance as provenance
+from ..mesh_generator_configuration import CadFile, Configuration, Plate, Ogive, Sphere, Cube, Cylinder, Dihedral
+from ..surface_mesh_generation import Scene, generate, prepare_generated, publish
+from ..mesh_generator_errors import ConfigurationError, MeshBlocked
+from ..mesh_node_relocation import improve
+from ..surface_mesh_snapshot import SurfaceMesh, assert_current, snapshot
+from ..gmsh_quality_metrics import add_quality_view
+from ..mesh_size_settings import Wave, Curvature
 
 PREFIX = 'BRL/'
 ACTION = PREFIX + '00 Action'
@@ -59,7 +59,7 @@ QUALITY_RETRY = PREFIX + '32 Shape-only generation retry'
 OUTPUT = PREFIX + '40 Output folder'
 APPLIED_SIZE = PREFIX + '03 Applied global size'
 QUALITY_COLORS = PREFIX + '04 Quality colors'
-QUALITY_METRICS = ['Off', 'ICN', 'Aspect ratio', 'Radius ratio']
+QUALITY_METRICS = ['Off', 'ICN', 'IGE', 'Aspect ratio', 'Radius ratio']
 CAP_ENABLED = PREFIX + 'Sizing/Use explicit size cap'
 WAVE_ENABLED = PREFIX + 'Sizing/Wavelength enabled'
 FREQUENCY = PREFIX + 'Sizing/Frequency Hz'

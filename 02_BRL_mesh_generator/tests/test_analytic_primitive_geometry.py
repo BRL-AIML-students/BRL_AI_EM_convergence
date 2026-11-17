@@ -7,7 +7,7 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from brl_mesh.cad_geometry_import import build_geometry
 from brl_mesh.mesh_generator_configuration import Configuration
 from brl_mesh.surface_mesh_generation import mesh_model, run
@@ -85,7 +85,7 @@ def test_primitive_nas_repeatability_and_native_ui_roundtrip(tmp_path, kind):
     config = configuration(tmp_path, kind)
     first, second = run(config), run(config)
     assert first.nas_path.read_bytes() == second.nas_path.read_bytes()
-    assert {p.name for p in first.nas_path.parent.iterdir()} == {'mesh.nas'}
+    assert {p.name for p in first.nas_path.parent.iterdir()} == {'mesh.nas', 'mesh_quality.html'}
     gmsh.initialize(readConfigFiles=False)
     try:
         gmsh.option.setNumber('General.Terminal', 0)

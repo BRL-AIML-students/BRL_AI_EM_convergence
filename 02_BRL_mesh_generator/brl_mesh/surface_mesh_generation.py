@@ -177,15 +177,18 @@ class RunResult:
     triangle_count: int
     attempts: tuple[Attempt, ...] = ()
     warnings: tuple[str, ...] = ()
+    quality_report_path: Path | None = None
+    quality_summary: dict | None = None
 
 
-def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult:
+def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene, *, report_nas_name="mesh.nas") -> RunResult:
     """Reinspect the current mesh against its generation reference before output."""
     assert_current(mesh)
     scene.require_current(config)
     metadata = provenance.require_current(scene.generation_provenance, config, scene.cad.digest)
     current = snapshot(scene.membership)
-    inspect_mesh(current, scene.contract).require_pass()
+    inspection = inspect_mesh(current, scene.contract)
+    inspection.require_pass()
     geometry = config.to_dict()['geometry']
     dimensions = '_'.join(f'{key}{geometry[key]:g}' for key in
                           ('diameter', 'length', 'thickness', 'radius', 'side', 'height')
@@ -204,15 +207,24 @@ def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult
                   geometry=geometry, length_unit=config.length_unit, provenance=metadata)
         nas.validate(source, current, provenance=metadata)
         digest = nas.file_digest(source)
+        from .mesh_quality_report import write_report
+        report = local / 'mesh_quality.html'
+        summary = write_report(report, current, inspection, config, scene.cad.digest, digest, report_nas_name)
+        if summary['violating_count']:
+            warnings.append(f"품질 기준 위반 요소: {summary['violating_count']}개")
         config.output_dir.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix='.pending-', dir=config.output_dir))
         target = stage / 'mesh.nas'
         shutil.copyfile(source, target)
         if nas.file_digest(target) != digest:
             raise MeshBlocked('NAS 전송 검증이 일치하지 않습니다')
+        shutil.copyfile(report, stage / report.name)
+        if nas.file_digest(report) != nas.file_digest(stage / report.name):
+            raise MeshBlocked('품질 보고서 전송 검증이 일치하지 않습니다')
         final = config.output_dir / run_name
         stage.rename(final)
-        result = RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids))
+        result = RunResult(final / 'mesh.nas', len(mesh.node_ids), len(mesh.element_ids),
+                           quality_report_path=final / report.name, quality_summary=summary)
     except BaseException as exc:
         error = exc
     finally:
@@ -232,7 +244,7 @@ def publish(mesh: SurfaceMesh, config: Configuration, scene: Scene) -> RunResult
 
 
 
-def run(config: Configuration) -> RunResult:
+def run(config: Configuration, *, report_nas_name="mesh.nas") -> RunResult:
     with mesh_model(config) as scene:
         scene, prepared = prepare_generated(scene, config)
-        return replace(publish(prepared.mesh, config, scene), attempts=prepared.attempts)
+        return replace(publish(prepared.mesh, config, scene, report_nas_name=report_nas_name), attempts=prepared.attempts)

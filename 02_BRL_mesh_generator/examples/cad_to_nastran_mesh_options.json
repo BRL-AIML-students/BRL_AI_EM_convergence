@@ -50,6 +50,8 @@
   "quality": {
     "icn_enabled": true,
     "icn_minimum": 0.0,
+    "ige_enabled": false,
+    "ige_minimum": 0.0,
     "aspect_ratio_enabled": true,
     "aspect_ratio_maximum": 3.0,
     "minimum_angle_enabled": true,

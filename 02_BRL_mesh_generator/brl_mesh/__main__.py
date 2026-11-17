@@ -23,7 +23,8 @@ def execute(configuration: str) -> tuple[int, dict]:
         result = run(Configuration.load(configuration))
         for warning in result.warnings:
             print(WARNING + json.dumps(warning, ensure_ascii=False), file=sys.stderr)
-        return 0, {'status': 'ok', 'nas_path': str(result.nas_path)}
+        return 0, {'status': 'ok', 'nas_path': str(result.nas_path),
+                   'quality_report_path': str(result.quality_report_path), 'quality_summary': result.quality_summary}
     except MeshBlocked as exc:
         return 2, {'status': 'blocked', 'reason': error_message(exc)}
     except Exception as exc:
@@ -55,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.loads(line[len(WARNING):]), file=sys.stderr)
         expected = 'ok' if code == 0 else ('error' if code == 1 else 'blocked')
         if (not isinstance(state, dict) or state.get('status') != expected or
-                set(state) != {'status', 'nas_path' if code == 0 else 'reason'}):
+                set(state) != ({'status', 'nas_path', 'quality_report_path', 'quality_summary'} if code == 0 else {'status', 'reason'})):
             raise RuntimeError('실행 프로세스의 완료 상태가 유효하지 않습니다')
     except Exception as exc:
         code, state = 1, {'status': 'error', 'reason': error_message(exc)}

@@ -95,7 +95,8 @@ def test_imported_closed_solid_repeats_ids_coordinates_connectivity_and_pids(tmp
     config = cad_config(path)
     first, second = run(config), run(config)
     assert first.nas_path.read_bytes() == second.nas_path.read_bytes()
-    assert sorted(p.name for p in first.nas_path.parent.iterdir()) == ['mesh.nas']
+    assert sorted(p.name for p in first.nas_path.parent.iterdir()) == ['mesh.nas', 'mesh_quality.html']
+    assert first.quality_report_path.is_file() and second.quality_report_path.is_file()
 
 
 @pytest.mark.parametrize('sign', [-1, 1])
@@ -153,7 +154,7 @@ def test_cad_nested_schema_rejects_invalid_inputs(tmp_path, changes):
 
 
 @pytest.mark.parametrize('extension', ['step', 'iges', 'brep'])
-def test_fresh_cli_import_has_only_state_json_and_correct_units(tmp_path, extension):
+def test_fresh_cli_import_has_extended_state_json_and_correct_units(tmp_path, extension):
     import json
     from pyNastran.bdf.bdf import BDF
     path = write_cad(tmp_path / ('plate.' + extension))
@@ -164,7 +165,10 @@ def test_fresh_cli_import_has_only_state_json_and_correct_units(tmp_path, extens
                             capture_output=True, text=True, encoding='utf-8', timeout=20)
     assert result.returncode == 0, result.stderr
     state = json.loads(result.stdout)
-    assert set(state) == {'status', 'nas_path'} and state['status'] == 'ok'
+    assert set(state) == {'status', 'nas_path', 'quality_report_path', 'quality_summary'} and state['status'] == 'ok'
+    assert Path(state['quality_report_path']) == Path(state['nas_path']).with_name('mesh_quality.html')
+    assert Path(state['quality_report_path']).is_file()
+    assert state['quality_summary']['element_count'] > 0
     assert result.stderr == ''
     reader = BDF(debug=False)
     reader.read_bdf(state['nas_path'], xref=False, punch=True)

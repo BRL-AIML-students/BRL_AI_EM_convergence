@@ -6,7 +6,7 @@ if not exist ".venv\Scripts\python.exe" (
   popd
   exit /b 1
 )
-".venv\Scripts\python.exe" -m brl_mesh.gmsh_onelab_mesh_interface %*
+".venv\Scripts\python.exe" -m brl_mesh.ui.gmsh_onelab_mesh_interface %*
 set "brlExit=%errorlevel%"
 popd
 exit /b %brlExit%

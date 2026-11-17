@@ -26,22 +26,105 @@ from brl_mesh.mesh_size_settings import parse_sizing
 ROOT = Path(__file__).resolve().parent
 CAD_SUFFIXES = frozenset({'.step', '.stp', '.iges', '.igs', '.brep'})
 PROTOCOL = 'BRL_CAD_RESULT '
+# 변환 시 호출자가 덮어쓸 수 있는 기본 설정입니다.
 DEFAULT_OPTIONS = {
-    'length_unit': None, 'output_unit': 'm', 'target_size': None,
-    'mesh_frequency_hz': None, 'elements_per_wavelength': 10,
-    'relative_permittivity': 1, 'relative_permeability': 1,
-    'minimum_size': None, 'short_edges': 'auto', 'widths': 'auto',
-    'gaps': False, 'local': {}, 'curvature': 'auto',
-    'curvature_absolute_tolerance': None, 'curvature_relative_tolerance': None,
-    'curvature_tolerance_ratio': .02, 'curvature_max_iterations': 3,
-    'curvature_sampling_nodes': 10, 'curvature_verification_nodes': 19,
-    'curvature_feedback': 'entity', 'improvement': True, 'max_passes': 3,
-    'quality_retry': 'none', 'sheet_normal': None, 'sheet_normals': {},
-    'separated_surfaces': [], 'protected_gap': None,
-    'target_size_enabled': True, 'wavelength_sizing_enabled': True,
-    'minimum_size_enabled': True, 'local_size_fields_enabled': True,
-    'local_curves_enabled': True, 'local_boxes_enabled': True,
-    'quality': QualitySettings().to_dict(),
+
+    # 단위와 전역 크기
+    # CAD 입력 길이 단위
+    'length_unit': None,
+    # NAS 출력 길이 단위
+    'output_unit': 'm',
+    # 전역 목표 크기
+    'target_size': None,
+    # 독립 메쉬 주파수 (Hz)
+    'mesh_frequency_hz': None,
+    # 파장당 요소 수
+    'elements_per_wavelength': 10,
+    # 상대 유전율
+    'relative_permittivity': 1,
+    # 상대 투자율
+    'relative_permeability': 1,
+    # 최소 크기
+    'minimum_size': None,
+
+    # 국소 크기 및 곡률
+    # 짧은 경계 크기 제어
+    'short_edges': 'auto',
+    # 폭 기반 크기 제어
+    'widths': 'auto',
+    # gap 기반 크기 제어
+    'gaps': False,
+    # 국소 크기 규칙
+    'local': {},
+    # 곡률 크기 제어
+    'curvature': 'auto',
+    # 곡률 절대 허용 편차
+    'curvature_absolute_tolerance': None,
+    # 곡률 상대 허용 편차
+    'curvature_relative_tolerance': None,
+    # 자동 곡률 허용 편차 비율
+    'curvature_tolerance_ratio': .02,
+    # 곡률 보정 최대 반복
+    'curvature_max_iterations': 3,
+    # 곡률 표본 수
+    'curvature_sampling_nodes': 10,
+    # 곡률 검증 표본 수
+    'curvature_verification_nodes': 19,
+    # 곡률 피드백 범위
+    'curvature_feedback': 'entity',
+    # 개선과 형상 경계
+    # 노드 개선 활성화
+    'improvement': True,
+    # 개선 최대 반복
+    'max_passes': 3,
+    # 품질 위반 시 재생성 방법
+    'quality_retry': 'none',
+    # 기본 sheet 법선 방향
+    'sheet_normal': None,
+    # surface별 sheet 법선 방향
+    'sheet_normals': {},
+    # 분리 surface 지정
+    'separated_surfaces': [],
+    # 보호 gap
+    'protected_gap': None,
+
+    # 크기 제어 활성화
+    # 목표 크기 활성화
+    'target_size_enabled': True,
+    # 파장 크기 활성화
+    'wavelength_sizing_enabled': True,
+    # 최소 크기 활성화
+    'minimum_size_enabled': True,
+    # 국소 크기장 활성화
+    'local_size_fields_enabled': True,
+    # 곡선 크기장 활성화
+    'local_curves_enabled': True,
+    # 상자 크기장 활성화
+    'local_boxes_enabled': True,
+
+    # 독립 품질 지표별 활성화와 기준
+    'quality': {
+        # ICN 측정 활성화
+        'icn_enabled': True,
+        # ICN 하한 (이상)
+        'icn_minimum': 0.0,
+        # IGE 측정 활성화 (기본 OFF)
+        'ige_enabled': False,
+        # IGE 하한: 0은 중립 기준이며 측정값의 양수 유효성은 별도 검사
+        'ige_minimum': 0.0,
+        # 종횡비 측정 활성화
+        'aspect_ratio_enabled': True,
+        # 종횡비 상한 (이하)
+        'aspect_ratio_maximum': 3.0,
+        # 최소각 측정 활성화
+        'minimum_angle_enabled': True,
+        # 최소각 하한 (도, 이상)
+        'minimum_angle_degrees': 20.0,
+        # Radius ratio (Gmsh 내장 gamma) 측정 활성화
+        'radius_ratio_enabled': False,
+        # Radius ratio 하한 (이상)
+        'radius_ratio_minimum': 0.5,
+    },
 }
 
 
@@ -141,6 +224,8 @@ class ConversionResult:
     applied_options: dict = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     reason: str | None = None
+    quality_report_path: Path | None = None
+    quality_summary: dict | None = None
 
     @property
     def exit_code(self):
@@ -148,7 +233,7 @@ class ConversionResult:
 
     def to_dict(self):
         value = asdict(self)
-        for key in ('cad_path', 'requested_nas_path', 'nas_path'):
+        for key in ('cad_path', 'requested_nas_path', 'nas_path', 'quality_report_path'):
             value[key] = str(value[key]) if value[key] is not None else None
         return value
 
@@ -214,8 +299,10 @@ def convert_cad_to_nas(cad_path, nas_path, *, options=None, timeout=None,
             raise ValueError('BREP에는 length_unit을 명시해야 합니다')
         if target.suffix.lower() != '.nas' or target == source:
             raise ValueError('출력에는 입력과 다른 .nas 파일 경로가 필요합니다')
-        if target.exists():
-            raise FileExistsError(f'기존 출력을 덮어쓰지 않습니다: {target}')
+        report_target = target.with_name(target.stem + '_quality.html')
+        for destination in (target, report_target):
+            if destination.exists():
+                raise FileExistsError(f'기존 출력을 덮어쓰지 않습니다: {destination}')
         if timeout is not None and (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
             raise ValueError('timeout: 양의 유한한 초 단위 값이 필요합니다')
         cache = ROOT / '.cache' / 'cad-to-nas'
@@ -223,7 +310,7 @@ def convert_cad_to_nas(cad_path, nas_path, *, options=None, timeout=None,
         with tempfile.TemporaryDirectory(prefix='job-', dir=cache, ignore_cleanup_errors=True) as temp:
             stage = Path(temp)
             request = stage / 'request.json'
-            request.write_text(json.dumps({'cad_path': str(source), 'options': settings},
+            request.write_text(json.dumps({'cad_path': str(source), 'nas_path': str(target), 'options': settings},
                                           ensure_ascii=True, allow_nan=False), encoding='utf-8')
             child = subprocess.run(
                 [str(python_executable or sys.executable), '-B', '-X', 'utf8',
@@ -245,9 +332,26 @@ def convert_cad_to_nas(cad_path, nas_path, *, options=None, timeout=None,
                 raise RuntimeError('worker의 로컬 NAS 경로가 유효하지 않습니다')
             if _digest(generated) != data['nas_sha256']:
                 raise RuntimeError('worker 완료 후 로컬 NAS가 변경됐습니다')
+            generated_report = Path(data['quality_report_path']).resolve()
+            if not generated_report.is_relative_to(stage) or not generated_report.is_file():
+                raise RuntimeError('worker의 로컬 보고서 경로가 유효하지 않습니다')
+            if _digest(generated_report) != data['quality_report_sha256']:
+                raise RuntimeError('worker 완료 후 보고서가 변경됐습니다')
             _copy_final(generated, target)
+            identity = target.stat()
+            try:
+                _copy_final(generated_report, report_target)
+            except BaseException:
+                try:
+                    current = target.stat()
+                    if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns) == (identity.st_dev, identity.st_ino, identity.st_size, identity.st_mtime_ns):
+                        target.unlink()
+                except FileNotFoundError:
+                    pass
+                raise
             result = ConversionResult('ok', source, target, target, data['node_count'],
-                                      data['triangle_count'], data['applied_options'], tuple(data['warnings']))
+                                      data['triangle_count'], data['applied_options'], tuple(data['warnings']),
+                                      quality_report_path=report_target, quality_summary=data['quality_summary'])
         if stage.exists():
             result = replace(result, warnings=(*result.warnings, f'로컬 임시 폴더 정리 미완료: {stage}'))
         return result
@@ -273,7 +377,8 @@ def convert_many(jobs: Iterable[ConversionJob | Mapping], *, default_options=Non
     if type(continue_on_error) is not bool:
         raise ValueError('continue_on_error: bool이 필요합니다')
     prepared = [_job(job) for job in jobs]
-    targets = [os.path.normcase(str(Path(job.nas_path).resolve())) for job in prepared]
+    paths = [Path(job.nas_path).resolve() for job in prepared]
+    targets = [os.path.normcase(str(p)) for path in paths for p in (path, path.with_name(path.stem + '_quality.html'))]
     if len(set(targets)) != len(targets):
         raise ValueError('여러 CAD의 NAS 출력 경로가 중복됩니다')
     for job in prepared:
@@ -425,7 +530,7 @@ def _worker(request_path):
         config, warnings = _resolve_configuration(source, settings, Path(request_path).parent / 'generated')
         if _digest(source) != before:
             raise MeshBlocked('CAD가 자동 옵션 분석 중 변경됐습니다')
-        result = run(config)
+        result = run(config, report_nas_name=request['nas_path'])
         if _digest(source) != before:
             raise MeshBlocked('CAD가 변환 중 변경됐습니다')
         applied = config.to_dict()
@@ -433,7 +538,10 @@ def _worker(request_path):
         payload = {'status': 'ok', 'nas_path': str(result.nas_path),
                    'nas_sha256': _digest(result.nas_path), 'node_count': result.node_count,
                    'triangle_count': result.triangle_count, 'applied_options': applied,
-                   'warnings': [*warnings, *result.warnings]}
+                   'warnings': [*warnings, *result.warnings],
+                   'quality_report_path': str(result.quality_report_path),
+                   'quality_report_sha256': _digest(result.quality_report_path),
+                   'quality_summary': result.quality_summary}
         code = 0
     except Exception as exc:
         # Missing runtime dependencies also get a structured error.

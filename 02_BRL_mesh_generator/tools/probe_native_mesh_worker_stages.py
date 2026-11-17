@@ -26,7 +26,8 @@ import time
 import gmsh
 import numpy as np
 
-from brl_mesh import native_mesh_worker as native_job, nastran_mesh_io as nas, mesh_generation_provenance as provenance
+from brl_mesh import nastran_mesh_io as nas, mesh_generation_provenance as provenance
+from brl_mesh.ui import native_mesh_worker as native_job
 from brl_mesh.mesh_generator_configuration import Configuration
 from brl_mesh.surface_mesh_generation import generate, prepare_generated
 from brl_mesh.mesh_contract_inspection import inspect_mesh
