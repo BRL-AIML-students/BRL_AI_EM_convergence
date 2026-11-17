@@ -9,13 +9,13 @@ import tempfile
 
 import gmsh
 
-from . import nastran_mesh_io as nas, mesh_generation_provenance as provenance
-from .mesh_generator_configuration import Configuration
-from .cad_geometry_import import fingerprint
-from .surface_mesh_generation import boundary_state, generate, prepare_generated, prepare_geometry, publish, scene_from_current
-from .mesh_generator_errors import MeshBlocked
-from .mesh_node_relocation import improve
-from .surface_mesh_snapshot import snapshot
+from .. import nastran_mesh_io as nas, mesh_generation_provenance as provenance
+from ..mesh_generator_configuration import Configuration
+from ..cad_geometry_import import fingerprint
+from ..surface_mesh_generation import boundary_state, generate, prepare_generated, prepare_geometry, publish, scene_from_current
+from ..mesh_generator_errors import MeshBlocked
+from ..mesh_node_relocation import improve
+from ..surface_mesh_snapshot import snapshot
 
 
 def canonical(value):
@@ -60,7 +60,7 @@ def write_json(path, value):
 class NativeJob:
     def __init__(self, config, action, scene=None):
         self.config, self.action = config, action
-        cache = Path(__file__).resolve().parent.parent / '.cache' / 'native-jobs'
+        cache = Path(__file__).resolve().parents[2] / '.cache' / 'native-jobs'
         cache.mkdir(parents=True, exist_ok=True)
         self.storage = tempfile.TemporaryDirectory(prefix='job-', dir=cache)
         self.root = Path(self.storage.name)
@@ -82,8 +82,8 @@ class NativeJob:
             write_json(self.root / 'request.json', request)
             self.log = (self.root / 'worker.log').open('wb')
             self.process = subprocess.Popen(
-                [sys.executable, '-B', '-X', 'utf8', '-m', 'brl_mesh.native_mesh_worker', str(self.root)],
-                cwd=Path(__file__).resolve().parent.parent, stdout=self.log, stderr=self.log,
+                [sys.executable, '-B', '-X', 'utf8', '-m', 'brl_mesh.ui.native_mesh_worker', str(self.root)],
+                cwd=Path(__file__).resolve().parents[2], stdout=self.log, stderr=self.log,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         except Exception:
             self.close()
@@ -115,7 +115,7 @@ class NativeJob:
         else:
             scene.require_current(config)
             provenance.require_current(scene.generation_provenance, config, scene.cad.digest)
-            from .surface_mesh_snapshot import assert_current
+            from ..surface_mesh_snapshot import assert_current
             assert_current(self.original)
             reference, sizing, curvature = scene.cad, scene.sizing, scene.curvature
         if self.action in (1, 2):
@@ -141,7 +141,7 @@ class NativeJob:
             return None
         from .verified_nastran_transfer import NasTransfer
         self.transfer = NasTransfer(self.root / 'publication' / name / 'mesh.nas',
-                                    self.config.output_dir, name, result['nas_digest'])
+                                    self.config.output_dir, name, result['nas_digest'], result['quality_report_sha256'])
         return self.transfer
 
     def close(self):
@@ -202,7 +202,7 @@ def execute(root):
             scene, prepared = prepare_generated(scene, config, phase)
         else:
             prepared = improve(scene.membership, scene.contract, config.improvement)
-            prepared.inspection.require_pass()
+            prepared.inspection.require_nonshape_pass()
         mesh = prepared.mesh
         save_mesh(root / 'output.msh')
     else:
@@ -215,6 +215,8 @@ def execute(root):
         publication = publish(mesh, config, scene)
         result.update(publication=publication.nas_path.parent.name,
                       nas_digest=nas.file_digest(publication.nas_path),
+                      quality_report_sha256=nas.file_digest(publication.quality_report_path),
+                      quality_summary=publication.quality_summary,
                       warnings=list(publication.warnings))
     return result
 

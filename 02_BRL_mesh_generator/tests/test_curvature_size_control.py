@@ -82,7 +82,12 @@ def test_more_than_200_circle_requirement_reaches_actual_boundary(tmp_path):
         inspection = inspect_mesh(mesh, scene.contract)
         inspection.require_pass()
         result = publish(mesh, config, scene)
-        assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas'}
+        assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas', 'mesh_quality.html'}
+        import hashlib
+        digest = hashlib.sha256(result.nas_path.read_bytes()).hexdigest()
+        assert result.quality_report_path.is_file()
+        assert digest == result.quality_summary['nas_sha256']
+        assert digest in result.quality_report_path.read_text(encoding='utf-8')
 
 
 def test_iteration_limit_blocks_instead_of_accepting_initial_estimate(tmp_path):

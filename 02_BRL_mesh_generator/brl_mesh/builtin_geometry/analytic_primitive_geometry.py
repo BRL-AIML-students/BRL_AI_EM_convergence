@@ -4,8 +4,8 @@ import sys
 
 import gmsh
 
-from .mesh_generator_configuration import Sphere, Cube, Cylinder, Dihedral
-from .mesh_generator_errors import ConfigurationError, MeshBlocked
+from ..mesh_generator_configuration import Sphere, Cube, Cylinder, Dihedral
+from ..mesh_generator_errors import ConfigurationError, MeshBlocked
 
 
 def parameters(geometry, scale):

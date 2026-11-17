@@ -7,7 +7,9 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh import surface_mesh_generation as engine, native_mesh_worker as native_job, gmsh_onelab_mesh_interface as ui, mesh_generation_provenance as provenance
+from brl_mesh import surface_mesh_generation as engine, mesh_generation_provenance as provenance
+from brl_mesh.ui import native_mesh_worker as native_job
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from brl_mesh.mesh_generator_configuration import Configuration, Generation, Improvement
 from brl_mesh.mesh_generator_errors import ConfigurationError, MeshBlocked
 from brl_mesh.surface_mesh_snapshot import snapshot
@@ -74,7 +76,7 @@ def test_shape_only_failure_retries_once_and_publishes_independent_nas(config, m
         assert algorithms == [6, 5]
         assert not prepared.inspection.issues and prepared.inspection.shape.violating_count == 0
         metadata = provenance.require_current(scene.generation_provenance, configured, scene.cad.digest)
-        assert metadata['schema'] == 4
+        assert metadata['schema'] == 5
         assert metadata['configured_options']['Mesh.Algorithm'] == 5
         assert metadata['effective_config']['generation'] == {'quality_retry': 'delaunay'}
         assert metadata['actual_algorithm'] is None
@@ -100,10 +102,10 @@ def test_passing_opt_in_does_not_generate_alternate(config, monkeypatch):
 
 def test_default_none_does_not_retry_shape_failure(config, monkeypatch):
     algorithms = distort_first_candidate(monkeypatch)
-    with pytest.raises(MeshBlocked, match='AR'):
-        engine.run(replace(config, improvement=Improvement(False, 0)))
+    result = engine.run(replace(config, improvement=Improvement(False, 0)))
     assert algorithms == [6]
-    assert not list(config.output_dir.rglob('*.nas'))
+    assert result.quality_summary['violating_count'] > 0
+    assert result.nas_path.exists() and result.quality_report_path.exists()
 
 
 def test_second_shape_failure_stops_without_third_candidate(config, monkeypatch):
@@ -115,10 +117,10 @@ def test_second_shape_failure_stops_without_third_candidate(config, monkeypatch)
         distort_interior(scene.membership)
         return scene
     monkeypatch.setattr(engine, '_generate_candidate', candidate)
-    with pytest.raises(MeshBlocked, match='AR'):
-        engine.run(retry_config(config))
+    result = engine.run(retry_config(config))
     assert algorithms == [6, 5]
-    assert not list(config.output_dir.rglob('*.nas'))
+    assert result.quality_summary['violating_count'] > 0
+    assert result.nas_path.exists() and result.quality_report_path.exists()
 
 
 @pytest.mark.parametrize('failure', ['generate', 'improve', 'nonshape'])
@@ -326,3 +328,20 @@ def test_synchronous_current_improve_rejects_changed_generation_options(config, 
             gmsh.option.setNumber(option, old)
     finally:
         gmsh.finalize()
+
+
+def test_ige_only_threshold_triggers_retry(config, monkeypatch):
+    from brl_mesh.mesh_quality_settings import QualitySettings
+    configured = replace(retry_config(config), quality=QualitySettings(icn_enabled=False, aspect_ratio_enabled=False,
+                         minimum_angle_enabled=False, ige_enabled=True, ige_minimum=1.))
+    original = engine._generate_candidate
+    algorithms = []
+    def candidate(*args):
+        algorithms.append(gmsh.option.getNumber('Mesh.Algorithm'))
+        return original(*args)
+    monkeypatch.setattr(engine, '_generate_candidate', candidate)
+    with engine.mesh_model(configured) as scene:
+        scene, result = engine.prepare_generated(scene, configured)
+        assert algorithms == [6, 5]
+        assert result.inspection.violating_count > 0
+        assert engine.publish(result.mesh, configured, scene).nas_path.exists()

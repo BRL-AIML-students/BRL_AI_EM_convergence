@@ -7,6 +7,15 @@ from brl_mesh import surface_mesh_generation as engine, nastran_mesh_io as nas
 from brl_mesh.mesh_generator_errors import MeshBlocked
 
 
+@pytest.fixture(autouse=True)
+def report_stub(monkeypatch):
+    from brl_mesh import mesh_quality_report
+    def write(path, *args):
+        path.write_text('report', encoding='utf-8')
+        return {'violating_count': 0}
+    monkeypatch.setattr(mesh_quality_report, 'write_report', write)
+
+
 def test_publish_validates_locally_before_destination(square, config, monkeypatch):
     monkeypatch.setattr(engine, 'assert_current', lambda mesh: None)
     monkeypatch.setattr(engine, 'snapshot', lambda membership: square)

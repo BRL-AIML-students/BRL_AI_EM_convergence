@@ -5,14 +5,20 @@ import threading
 
 import pytest
 
-from brl_mesh import verified_nastran_transfer as nas_transfer
+from brl_mesh.ui import verified_nastran_transfer as nas_transfer
 from brl_mesh.mesh_generator_errors import MeshBlocked
 
+
+
+def make_transfer(source, output, name, digest):
+    report = source.with_name('mesh_quality.html')
+    report.write_bytes(b'quality report')
+    return nas_transfer.NasTransfer(source, output, name, digest, hashlib.sha256(b'quality report').hexdigest())
 
 def transfer(tmp_path, data=b'valid NAS'):
     source = tmp_path / 'source.nas'
     source.write_bytes(data)
-    value = nas_transfer.NasTransfer(source, tmp_path / 'output', 'run_test', hashlib.sha256(data).hexdigest())
+    value = make_transfer(source, tmp_path / 'output', 'run_test', hashlib.sha256(data).hexdigest())
     return value
 
 
@@ -27,7 +33,9 @@ def test_transfer_and_existing_result_preserved(tmp_path):
     previous.write_bytes(b'old')
     value = transfer(tmp_path)
     finish(value)
-    assert Path(value.commit()).read_bytes() == b'valid NAS'
+    published = Path(value.commit())
+    assert published.read_bytes() == b'valid NAS'
+    assert published.with_name('mesh_quality.html').read_bytes() == b'quality report'
     assert previous.read_bytes() == b'old'
 
 
@@ -40,6 +48,22 @@ def test_stage_changed_after_validation_is_blocked(tmp_path):
         assert Path(value.commit()).read_bytes() == b'valid NAS'
     else:
         (value.stage / 'mesh.nas').write_bytes(b'corrupted')
+        with pytest.raises(MeshBlocked, match='변경'):
+            value.commit()
+        value.cleanup()
+        assert not value.stage.exists()
+
+
+def test_report_replacement_after_validation_is_blocked(tmp_path):
+    value = transfer(tmp_path)
+    finish(value)
+    report = value.stage / 'mesh_quality.html'
+    if os.name == 'nt':
+        with pytest.raises(PermissionError):
+            report.write_bytes(b'corrupted')
+        assert Path(value.commit()).with_name('mesh_quality.html').read_bytes() == b'quality report'
+    else:
+        report.write_bytes(b'corrupted')
         with pytest.raises(MeshBlocked, match='변경'):
             value.commit()
         value.cleanup()
@@ -69,7 +93,7 @@ def test_cancel_waits_for_inflight_io_and_cleans_owned_stage(tmp_path, monkeypat
 def test_wrong_source_digest_never_publishes(tmp_path):
     source = tmp_path / 'source.nas'
     source.write_bytes(b'changed')
-    value = nas_transfer.NasTransfer(source, tmp_path / 'output', 'run_test', '0' * 64)
+    value = make_transfer(source, tmp_path / 'output', 'run_test', '0' * 64)
     finish(value)
     with pytest.raises(MeshBlocked, match='변경'):
         value.commit()
@@ -78,7 +102,8 @@ def test_wrong_source_digest_never_publishes(tmp_path):
 
 def test_controller_poll_and_cancel_do_not_wait_for_blocked_transfer(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh import gmsh_onelab_mesh_interface as ui, surface_mesh_snapshot as model
+    from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
+    from brl_mesh import surface_mesh_snapshot as model
     entered, release = threading.Event(), threading.Event()
     digest = nas_transfer._digest
     def blocked(stream, cancelled):
@@ -99,7 +124,7 @@ def test_controller_poll_and_cancel_do_not_wait_for_blocked_transfer(tmp_path, m
     job = SimpleNamespace(config=config, action=4, process=SimpleNamespace(poll=lambda: 0),
                           result=lambda: {'publication': 'run_test', 'warnings': []},
                           adopt=lambda result, old: (scene, mesh), close=lambda: closed.append(True))
-    job.start_publication = lambda result: nas_transfer.NasTransfer(
+    job.start_publication = lambda result: make_transfer(
         source, tmp_path / 'output', 'run_test', hashlib.sha256(b'good').hexdigest())
     controller = ui.AsyncController.__new__(ui.AsyncController)
     controller.quality_view = None
@@ -151,12 +176,13 @@ def test_cleanup_error_is_reported(tmp_path, monkeypatch):
     value.cleanup()
     assert 'locked' in value.warning
     unlink(value.stage / 'mesh.nas')
+    unlink(value.stage / 'mesh_quality.html')
     value.stage.rmdir()
 
 
 def test_controller_rechecks_settings_and_blocks_staged_result(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh import gmsh_onelab_mesh_interface as ui
+    from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
     config, changed = object(), object()
     current = [config]
     monkeypatch.setattr(ui, 'read_controls', lambda *args: current[0])
@@ -168,7 +194,7 @@ def test_controller_rechecks_settings_and_blocks_staged_result(tmp_path, monkeyp
     job = SimpleNamespace(config=config, action=4, process=SimpleNamespace(poll=lambda: 0),
                           result=lambda: {'publication': 'run_test'},
                           adopt=lambda result, old: (scene, mesh), close=lambda: closed.append(True))
-    job.start_publication = lambda result: nas_transfer.NasTransfer(
+    job.start_publication = lambda result: make_transfer(
         source, tmp_path / 'output', 'run_test', hashlib.sha256(b'valid').hexdigest())
     controller = ui.AsyncController.__new__(ui.AsyncController)
     controller.quality_view = None
@@ -193,7 +219,7 @@ def test_controller_rechecks_settings_and_blocks_staged_result(tmp_path, monkeyp
 
 def test_live_transfer_cannot_be_cleaned_or_job_closed(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh.native_mesh_worker import NativeJob
+    from brl_mesh.ui.native_mesh_worker import NativeJob
     entered, release = threading.Event(), threading.Event()
     original = nas_transfer._digest
     def blocked(stream, cancelled):
@@ -221,7 +247,8 @@ def test_live_transfer_cannot_be_cleaned_or_job_closed(tmp_path, monkeypatch):
 
 def test_status_error_during_live_transfer_retains_ownership(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh import gmsh_onelab_mesh_interface as ui, surface_mesh_snapshot as model
+    from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
+    from brl_mesh import surface_mesh_snapshot as model
     entered, release = threading.Event(), threading.Event()
     original = nas_transfer._digest
     def blocked(stream, cancelled):
@@ -239,7 +266,7 @@ def test_status_error_during_live_transfer_retains_ownership(tmp_path, monkeypat
     job = SimpleNamespace(config=config, action=4, process=SimpleNamespace(poll=lambda: 0),
                           result=lambda: {'publication': 'run_test'}, adopt=lambda *_: (scene, mesh),
                           close=lambda: closed.append(True))
-    job.start_publication = lambda _: nas_transfer.NasTransfer(
+    job.start_publication = lambda _: make_transfer(
         source, tmp_path / 'output', 'run_test', hashlib.sha256(b'valid').hexdigest())
     controller = ui.AsyncController.__new__(ui.AsyncController)
     controller.quality_view = None
@@ -293,7 +320,8 @@ def test_rename_failure_releases_file_handle_and_allows_cleanup(tmp_path, monkey
 
 def test_post_commit_status_error_keeps_published_path(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh import gmsh_onelab_mesh_interface as ui, surface_mesh_snapshot as model
+    from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
+    from brl_mesh import surface_mesh_snapshot as model
     config, mesh = object(), object()
     scene = SimpleNamespace(require_current=lambda config: None, generation_provenance='reference',
                             cad=SimpleNamespace(digest=None))
@@ -306,7 +334,7 @@ def test_post_commit_status_error_keeps_published_path(tmp_path, monkeypatch):
     job = SimpleNamespace(config=config, action=4, process=SimpleNamespace(poll=lambda: 0),
                           result=lambda: {'publication': 'run_test'}, adopt=lambda *_: (scene, mesh),
                           close=lambda: closed.append(True))
-    job.start_publication = lambda _: nas_transfer.NasTransfer(
+    job.start_publication = lambda _: make_transfer(
         source, tmp_path / 'output', 'run_test', hashlib.sha256(b'valid').hexdigest())
     controller = ui.AsyncController.__new__(ui.AsyncController)
     controller.quality_view = None
@@ -355,7 +383,7 @@ def test_fdopen_failure_closes_windows_handle(tmp_path, monkeypatch):
 
 def test_job_close_cleans_ready_transfer_and_reports_cleanup_warning(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh.native_mesh_worker import NativeJob
+    from brl_mesh.ui.native_mesh_worker import NativeJob
     value = transfer(tmp_path)
     finish(value)
     unlink = Path.unlink
@@ -372,12 +400,13 @@ def test_job_close_cleans_ready_transfer_and_reports_cleanup_warning(tmp_path, m
         job.close()
     assert cleaned == [True] and value.locked_stream is None
     unlink(value.stage / 'mesh.nas')
+    unlink(value.stage / 'mesh_quality.html')
     value.stage.rmdir()
 
 
 def test_finish_job_keeps_live_transfer_when_worker_is_done(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from brl_mesh import gmsh_onelab_mesh_interface as ui
+    from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
     entered, release = threading.Event(), threading.Event()
     original = nas_transfer._digest
     def blocked(stream, cancelled):
@@ -406,6 +435,8 @@ def test_replaced_stage_directory_is_preserved(tmp_path):
     finish(value)
     value.locked_stream.close()
     value.locked_stream = None
+    value.report_stream.close()
+    value.report_stream = None
     original = value.stage.with_name('moved-original')
     value.stage.rename(original)
     value.stage.mkdir()

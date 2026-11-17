@@ -5,7 +5,7 @@ import json
 import gmsh
 
 from brl_mesh.mesh_generator_configuration import Configuration
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 
 
 def main():

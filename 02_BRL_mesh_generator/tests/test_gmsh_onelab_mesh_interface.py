@@ -6,11 +6,11 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from brl_mesh.triangle_shape_checks import measure_shape
 from brl_mesh.surface_mesh_generation import run
 from brl_mesh.surface_mesh_snapshot import snapshot
-from brl_mesh.gmsh_quality_metrics import read_icn
+from brl_mesh.gmsh_quality_metrics import read_icn, read_ige
 from tests.mesh_test_helpers import distort_interior
 from tests.test_cad_geometry_import import cad_config, write_cad
 
@@ -43,7 +43,9 @@ def test_quality_colors_map_current_elements_and_preserve_other_views(controller
     gmsh.model.mesh.setVisibility(mesh.element_ids[:1], 0)
     visibility = gmsh.model.mesh.getVisibility(mesh.element_ids).copy()
     original_faces = gmsh.option.getNumber('Mesh.SurfaceFaces')
+    assert not config.quality.ige_enabled
     metrics = {'ICN': read_icn(mesh),
+               'IGE': read_ige(mesh),
                'Aspect ratio': dict(zip(mesh.element_ids, measure_shape(mesh).aspect_ratios)),
                'Radius ratio': dict(zip(mesh.element_ids, gmsh.model.mesh.getElementQualities(mesh.element_ids, 'gamma')))}
     for metric, expected in metrics.items():
@@ -198,10 +200,10 @@ def test_manual_interior_mesh_change_discards_old_result_and_rechecks_current(co
     distort_interior(scene.membership)
     controller.invalidate_if_changed()
     assert controller.scene is scene and controller.last_mesh is None
-    assert 'Blocked:' in action(controller, 4)
-    assert not config.output_dir.exists()
+    assert 'NAS published' in action(controller, 4)
+    assert list(config.output_dir.glob('run_*/mesh_quality.html'))
     assert 'completed' in action(controller, 3)
-    assert action(controller, 4) == 'NAS published'
+    assert 'NAS published' in action(controller, 4)
 
 
 def test_manual_boundary_line_connectivity_cannot_be_published(controller, config):

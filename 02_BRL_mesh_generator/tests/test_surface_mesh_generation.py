@@ -17,8 +17,8 @@ def test_generation_repeats_without_overwriting_and_only_publishes_nas(config):
     assert first.nas_path != second.nas_path
     assert first.nas_path.read_bytes() == second.nas_path.read_bytes()
     files = sorted(config.output_dir.rglob('*'))
-    assert {p.name for p in files if p.is_file()} == {'mesh.nas'}
-    assert len([p for p in files if p.is_file()]) == 2
+    assert {p.name for p in files if p.is_file()} == {'mesh.nas', 'mesh_quality.html'}
+    assert len([p for p in files if p.is_file()]) == 4
     assert not list(config.output_dir.glob('.pending-*'))
 
 
@@ -57,7 +57,7 @@ def test_cli_success_and_invalid_input_have_minimal_json_state(tmp_path):
                            capture_output=True, text=True, encoding='utf-8', env=environment)
     assert valid.returncode == 0, valid.stderr
     state = json.loads(valid.stdout)
-    assert set(state) == {'status', 'nas_path'} and state['status'] == 'ok'
+    assert set(state) == {'status', 'nas_path', 'quality_report_path', 'quality_summary'} and state['status'] == 'ok'
     assert Path(state['nas_path']).is_file()
     config_path.write_text('{"schema_version":2}', encoding='utf-8')
     invalid = subprocess.run([sys.executable, '-m', 'brl_mesh', str(config_path)],
@@ -74,9 +74,10 @@ def test_cli_disabled_improvement_still_blocks_bad_shape(tmp_path):
         'output_dir': 'blocked-output'}), encoding='utf-8')
     result = subprocess.run([sys.executable, '-m', 'brl_mesh', str(source)],
                             capture_output=True, text=True, encoding='utf-8', env=os.environ | {'PYTHONUTF8': '1'})
-    assert result.returncode == 2 and not result.stdout
-    assert json.loads(result.stderr)['status'] == 'blocked'
-    assert not (tmp_path / 'blocked-output').exists()
+    assert result.returncode == 0
+    state = json.loads(result.stdout)
+    assert state['quality_summary']['violating_count'] > 0
+    assert Path(state['quality_report_path']).is_file()
 
 
 def test_output_directory_change_rechecks_and_publishes_existing_mesh(config, tmp_path):
@@ -93,13 +94,13 @@ def test_output_directory_change_rechecks_and_publishes_existing_mesh(config, tm
 def test_cli_forwards_only_warning_to_stderr_without_changing_json(monkeypatch, capsys):
     from types import SimpleNamespace
     from brl_mesh import __main__ as cli
-    payload = cli.PROTOCOL + json.dumps({'status': 'ok', 'nas_path': 'result.nas'})
+    payload = cli.PROTOCOL + json.dumps({'status': 'ok', 'nas_path': 'result.nas', 'quality_report_path': 'result_quality.html', 'quality_summary': {}})
     warning = cli.WARNING + json.dumps('cleanup failed')
     monkeypatch.setattr(cli.subprocess, 'run', lambda *args, **kwargs:
                         SimpleNamespace(stdout=payload, stderr=warning, returncode=0))
     assert cli.main(['input.json']) == 0
     output = capsys.readouterr()
-    assert json.loads(output.out) == {'status': 'ok', 'nas_path': 'result.nas'}
+    assert json.loads(output.out) == {'status': 'ok', 'nas_path': 'result.nas', 'quality_report_path': 'result_quality.html', 'quality_summary': {}}
     assert 'cleanup failed' in output.err
 
 

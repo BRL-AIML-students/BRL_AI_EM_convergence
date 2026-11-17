@@ -1,6 +1,8 @@
 """Real CAD/engine integration plus batch and publication failure contracts."""
 from dataclasses import replace
+import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -79,7 +81,7 @@ def test_auto_detects_curved_boundary_and_surface(cads, tmp_path, settings, kind
     assert mesh.get('local', {}).get('widths', {}).get('enabled', False) is widths
     if curvature:
         assert mesh['curvature']['absolute_tolerance'] == pytest.approx(.04)
-    assert list(tmp_path.iterdir()) == [result.nas_path]
+    assert set(tmp_path.iterdir()) == {result.nas_path, result.quality_report_path}
 
 
 def test_auto_widths_in_mixed_cad_and_explicit_overrides(cads, tmp_path, settings):
@@ -203,7 +205,7 @@ def test_batch_failure_isolation_and_options_override(cads, tmp_path, settings):
     assert results[0].nas_path is None
     assert results[1].applied_options['mesh']['target_size'] == 1
     assert settings['target_size'] == 2
-    assert len(list(tmp_path.iterdir())) == 1
+    assert len(list(tmp_path.iterdir())) == 2
 
 
 def test_batch_recovers_after_native_mesh_block_then_runs_multiple_successes(cads, tmp_path, settings):
@@ -213,7 +215,7 @@ def test_batch_recovers_after_native_mesh_block_then_runs_multiple_successes(cad
             adapter.ConversionJob(cads / 'plate.brep', tmp_path / 'plate.nas', {'curvature': False})]
     results = list(adapter.convert_many(jobs, default_options=settings))
     assert [r.status for r in results] == ['blocked', 'ok', 'ok']
-    assert {p.name for p in tmp_path.iterdir()} == {'sphere.nas', 'plate.nas'}
+    assert {p.name for p in tmp_path.iterdir()} == {'sphere.nas', 'plate.nas', 'sphere_quality.html', 'plate_quality.html'}
     assert all(adapter._digest(path) == value for path, value in before.items())
 
 
@@ -301,7 +303,7 @@ def test_worker_does_not_mutate_or_finalize_callers_gmsh(cads, tmp_path, setting
 
 
 def test_launcher_preserves_callers_relative_paths(cads, tmp_path):
-    child = subprocess.run(['cmd', '/d', '/c', str(adapter.ROOT / 'run_cad_to_nastran_surface_mesh.bat'),
+    child = subprocess.run([sys.executable, str(adapter.ROOT / 'convert_cad_to_nastran_surface_mesh.py'),
                             '--cad', 'plate.step', '--nas', str(tmp_path / 'launcher.nas'),
                             '--target-size', '.002', '--sheet-normal', '1'],
                            cwd=cads, capture_output=True, text=True, encoding='utf-8', timeout=60)
@@ -315,11 +317,30 @@ def test_relocated_distribution_runs_example_and_keeps_only_allowlisted_files(tm
     output = build(tmp_path / 'package.zip')
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
+        manifest = json.loads((tmp_path / 'package' / 'ORIGIN.json').read_text(encoding='utf-8'))
+        for name, digest in manifest['sha256'].items():
+            assert hashlib.sha256(archive.read('package/' + name)).hexdigest() == digest
+        with pytest.raises(FileExistsError):
+            build(output)
+        assert output.is_file()
+        assert not any('/brl_mesh/' + part + '/' in name for name in names for part in ('ui', 'development', 'builtin_geometry'))
+        assert not any(name.lower().endswith('.bat') for name in names)
+        readme = archive.read('package/README.md').decode('utf-8')
+        links = re.findall(r'\]\(([^)]+)\)', readme)
+        manuals = ('01_프로그램구성과사용인터페이스.html', '02_설정변수빠른참조.html',
+                   '03_메쉬생성원리와품질평가.html')
+        for name in manuals:
+            usage = archive.read('package/docs/' + name).decode('utf-8')
+            links += ['docs/' + href if '://' not in href else href
+                      for href in re.findall(r'href="([^"]+)"', usage) if not href.startswith('#')]
+        for href in links:
+            if '://' not in href and not href.startswith(('mailto:', '#')):
+                assert 'package/' + href.split('#')[0] in names, href
         assert not any(part in namestr for namestr in names for part in
                        ('.venv', '.cache', '.tools', '__pycache__', '.git/', 'outputs/'))
-        assert archive.read('CAD_to_NAS/brl_mesh/surface_mesh_generation.py') == (adapter.ROOT / 'brl_mesh/surface_mesh_generation.py').read_bytes()
+        assert archive.read('package/brl_mesh/surface_mesh_generation.py') == (adapter.ROOT / 'brl_mesh/surface_mesh_generation.py').read_bytes()
         archive.extractall(tmp_path / 'Other install path')
-    relocated = tmp_path / 'Other install path' / 'CAD_to_NAS'
+    relocated = tmp_path / 'Other install path' / 'package'
     child = subprocess.run([sys.executable, '-B', str(relocated / 'convert_cad_to_nastran_surface_mesh.py'),
                             '--jobs', str(relocated / 'examples/cad_to_nastran_conversion_jobs.json')],
                            cwd=tmp_path, capture_output=True, text=True, encoding='utf-8', timeout=120)
@@ -327,6 +348,7 @@ def test_relocated_distribution_runs_example_and_keeps_only_allowlisted_files(tm
     result = json.loads(child.stdout)
     assert Path(result['nas_path']).is_relative_to(relocated)
     assert Path(result['nas_path']).is_file()
+    assert Path(result['quality_report_path']).is_file()
     assert result['status'] == 'ok'
 
 
@@ -342,3 +364,78 @@ def test_unicode_install_path_has_actionable_error(cads, tmp_path, settings, mon
     monkeypatch.setattr(adapter, 'ROOT', tmp_path / '한글 설치')
     with pytest.raises(adapter.ConversionError, match='설치 경로'):
         convert(cads, tmp_path, settings)
+
+def test_quality_report_warns_and_matches_published_nas(cads, tmp_path, settings):
+    import hashlib
+    from pyNastran.bdf.bdf import BDF
+    settings = {**settings, 'quality': {'minimum_angle_degrees': 60, 'icn_enabled': False}}
+    result = convert(cads, tmp_path, settings, 'plate')
+    report = result.quality_report_path.read_text(encoding='utf-8')
+    digest = hashlib.sha256(result.nas_path.read_bytes()).hexdigest()
+    assert result.quality_summary['nas_sha256'] == digest and digest in report
+    assert result.quality_summary['violating_count'] > 0 and result.warnings
+    assert not result.quality_summary['metrics']['ICN']['evaluated']
+    model = BDF(debug=False)
+    model.read_bdf(str(result.nas_path), xref=False, punch=True)
+    for element_id in model.elements:
+        assert f'<td>{element_id}</td>' in report
+
+
+def test_report_collision_is_preserved(cads, tmp_path, settings):
+    report = tmp_path / 'plate_quality.html'
+    report.write_text('existing', encoding='utf-8')
+    with pytest.raises(adapter.ConversionError):
+        convert(cads, tmp_path, settings, 'plate')
+    assert report.read_text(encoding='utf-8') == 'existing'
+    assert not (tmp_path / 'plate.nas').exists()
+
+
+def test_report_transfer_failure_removes_nas(cads, tmp_path, settings, monkeypatch):
+    original = adapter._copy_final
+    def fail_report(source, target):
+        if target.suffix == '.html':
+            raise OSError('report transfer failed')
+        original(source, target)
+    monkeypatch.setattr(adapter, '_copy_final', fail_report)
+    with pytest.raises(adapter.ConversionError, match='report transfer failed'):
+        convert(cads, tmp_path, settings, 'plate')
+    assert not list(tmp_path.iterdir())
+
+
+
+def test_all_metrics_disabled_are_unevaluated(cads, tmp_path, settings):
+    quality = {name + '_enabled': False for name in ('icn', 'ige', 'aspect_ratio', 'minimum_angle', 'radius_ratio')}
+    result = convert(cads, tmp_path, {**settings, 'quality': quality}, 'plate')
+    assert all(not metric['evaluated'] for metric in result.quality_summary['metrics'].values())
+    assert '평가하지 않음 (활성 지표 없음)' in result.quality_report_path.read_text(encoding='utf-8')
+
+
+def test_ige_only_violation_publishes_report_and_nas(cads, tmp_path, settings):
+    from pyNastran.bdf.bdf import BDF
+    quality = {name + '_enabled': False for name in ('icn', 'aspect_ratio', 'minimum_angle', 'radius_ratio')}
+    quality.update(ige_enabled=True, ige_minimum=1.0)
+    result = convert(cads, tmp_path, {**settings, 'quality': quality}, 'plate')
+    report = result.quality_report_path.read_text(encoding='utf-8')
+    digest = hashlib.sha256(result.nas_path.read_bytes()).hexdigest()
+    metric = result.quality_summary['metrics']['IGE']
+    assert metric['evaluated'] and metric['violating_count'] > 0 and result.warnings
+    assert result.quality_summary['nas_sha256'] == digest and digest in report
+    assert 'IGE 분포' in report and '<option>IGE</option>' in report
+    model = BDF(debug=False)
+    model.read_bdf(str(result.nas_path), xref=False, punch=True)
+    assert any(f'<td>{element_id}</td>' in report for element_id in model.elements)
+    assert result.applied_options['quality']['ige_enabled'] is True
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_ige_cli_json_propagation(cads, tmp_path, settings, enabled):
+    options = tmp_path / 'options.json'
+    options.write_text(json.dumps({**settings, 'quality': {'ige_enabled': enabled, 'ige_minimum': .3}}), encoding='utf-8')
+    output = tmp_path / 'cli.nas'
+    child = subprocess.run([sys.executable, '-B', str(adapter.ROOT / 'convert_cad_to_nastran_surface_mesh.py'),
+                            '--cad', str(cads / 'plate.brep'), '--nas', str(output), '--options', str(options)],
+                           cwd=tmp_path, capture_output=True, text=True, encoding='utf-8', timeout=120)
+    assert child.returncode == 0, child.stderr + child.stdout
+    data = json.loads(child.stdout)
+    assert data['quality_summary']['metrics']['IGE']['evaluated'] is enabled
+    assert data['quality_summary']['metrics']['IGE']['threshold'] == .3

@@ -4,10 +4,10 @@ from __future__ import annotations
 import gmsh
 import numpy as np
 
-from .curvature_size_control import project
-from .mesh_generator_errors import MeshBlocked
-from .surface_mesh_snapshot import SurfaceMesh, surface_groups
-from .gmsh_quality_metrics import read_radius_ratio
+from ..curvature_size_control import project
+from ..mesh_generator_errors import MeshBlocked
+from ..surface_mesh_snapshot import SurfaceMesh, surface_groups
+from ..gmsh_quality_metrics import read_radius_ratio
 
 
 def _distribution(values, percentiles):

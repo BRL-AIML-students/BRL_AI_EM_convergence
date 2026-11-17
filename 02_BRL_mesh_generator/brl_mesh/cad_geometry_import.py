@@ -119,10 +119,10 @@ def build_geometry(config: Configuration) -> CadReference:
         face = gmsh.model.occ.addRectangle(x, y, z, length, width)
         signs = {face: 1}
     elif isinstance(geometry, Ogive):
-        from .tangent_ogive_geometry import build
+        from .builtin_geometry.tangent_ogive_geometry import build
         signs = build(geometry, config.unit_scale)
     elif isinstance(geometry, (Sphere, Cube, Cylinder, Dihedral)):
-        from .analytic_primitive_geometry import build
+        from .builtin_geometry.analytic_primitive_geometry import build
         signs = build(geometry, config.unit_scale)
     else:
         import_cad(geometry, config)

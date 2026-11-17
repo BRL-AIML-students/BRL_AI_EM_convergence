@@ -22,7 +22,8 @@ from tests.test_convert_cad_to_nastran_surface_mesh import cads, settings
 
 @pytest.mark.parametrize('value', [
     {'unknown': True}, {'icn_enabled': 1}, {'aspect_ratio_enabled': 'off'},
-    {'minimum_angle_enabled': None}, {'radius_ratio_enabled': []},
+    {'minimum_angle_enabled': None}, {'radius_ratio_enabled': []}, {'ige_enabled': 1},
+    {'ige_minimum': -0.1}, {'ige_minimum': 1.1}, {'ige_minimum': float('nan')}, {'ige_minimum': True},
     {'icn_minimum': -.1}, {'icn_minimum': 1.1}, {'icn_minimum': True},
     {'aspect_ratio_maximum': .9}, {'minimum_angle_degrees': -1},
     {'minimum_angle_degrees': 61}, {'radius_ratio_minimum': float('nan')},
@@ -56,20 +57,21 @@ def test_icn_off_never_calls_plugin_in_improvement_or_publication(config, monkey
 
 @pytest.mark.parametrize('metric,threshold', [
     ('icn', {'icn_minimum': .9}),
+    ('ige', {'ige_enabled': True, 'ige_minimum': .9}),
     ('aspect_ratio', {'aspect_ratio_maximum': 1}),
     ('minimum_angle', {'minimum_angle_degrees': 60}),
     ('radius_ratio', {'radius_ratio_enabled': True, 'radius_ratio_minimum': .9}),
 ])
 def test_each_gate_threshold_and_off_switch(config, monkeypatch, metric, threshold):
     monkeypatch.setattr(inspection, 'read_icn', lambda mesh: {int(tag): .5 for tag in mesh.element_ids})
+    monkeypatch.setattr(inspection, 'read_ige', lambda mesh: {int(tag): .5 for tag in mesh.element_ids})
     monkeypatch.setattr(inspection, 'read_radius_ratio', lambda mesh: np.full(len(mesh.element_ids), .5))
     with mesh_model(config) as scene:
         mesh = snapshot(scene.membership)
         policy = QualitySettings(**threshold)
         failed = inspection.inspect_mesh(mesh, replace(scene.contract, quality=policy))
         assert failed.violating_count > 0
-        with pytest.raises(MeshBlocked):
-            failed.require_pass()
+        failed.require_pass()
         passed = inspection.inspect_mesh(mesh, replace(scene.contract, quality=replace(policy, **{metric+'_enabled': False})))
         passed.require_pass()
         assert passed.violating_count == 0
@@ -88,8 +90,9 @@ def test_all_gates_off_keeps_geometry_and_normals_mandatory(config, monkeypatch)
 def test_publication_rejects_active_threshold_even_without_improvement(config):
     config = replace(config, quality=QualitySettings(aspect_ratio_maximum=1))
     with mesh_model(config) as scene:
-        with pytest.raises(MeshBlocked, match='형상 조건'):
-            publish(snapshot(scene.membership), config, scene)
+        result = publish(snapshot(scene.membership), config, scene)
+        assert result.quality_summary['violating_count'] > 0
+        assert result.quality_report_path.is_file()
 
 
 def test_improvement_uses_enabled_metrics_when_icn_off(config, monkeypatch):
@@ -222,15 +225,11 @@ def test_old_mesh_frequency_key_is_rejected_in_engine(config):
 def test_real_radius_ratio_gate_controls_nas_publication(cads, tmp_path, settings, threshold, blocked):
     options = {**settings, 'improvement': False,
                'quality': {'radius_ratio_enabled': True, 'radius_ratio_minimum': threshold}}
-    if blocked:
-        with pytest.raises(converter.ConversionError, match='radius ratio') as error:
-            converter.convert_cad_to_nas(cads/'plate.brep', tmp_path/'mesh.nas', options=options)
-        assert error.value.result.status == 'blocked'
-        assert not list(tmp_path.iterdir())
-    else:
-        result = converter.convert_cad_to_nas(cads/'plate.brep', tmp_path/'mesh.nas', options=options)
-        assert result.nas_path.is_file()
-        assert result.applied_options['quality']['radius_ratio_enabled'] is True
+    result = converter.convert_cad_to_nas(cads/'plate.brep', tmp_path/'mesh.nas', options=options)
+    assert result.nas_path.is_file() and result.quality_report_path.is_file()
+    assert result.applied_options['quality']['radius_ratio_enabled'] is True
+    assert (result.quality_summary['metrics']['Radius ratio']['violating_count'] > 0) is blocked
+
 
 
 def test_quality_retry_works_without_icn(config, monkeypatch):
@@ -245,3 +244,36 @@ def test_quality_retry_works_without_icn(config, monkeypatch):
         assert algorithms == [6, 5]
         assert not result.inspection.icn
         assert publish(result.mesh, configured, scene).nas_path.is_file()
+
+
+def test_ige_off_and_incomplete_measurement(config, monkeypatch):
+    monkeypatch.setattr(inspection, 'read_ige', lambda mesh: (_ for _ in ()).throw(RuntimeError('IGE failure')))
+    with mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        assert not inspection.inspect_mesh(mesh, scene.contract).issues
+        result = inspection.inspect_mesh(mesh, replace(scene.contract, quality=replace(config.quality, ige_enabled=True)))
+        assert any(issue.code == 'ige_incomplete' for issue in result.issues)
+        with pytest.raises(MeshBlocked): result.require_pass()
+
+
+def test_ige_change_requires_regeneration(config, monkeypatch):
+    from brl_mesh import mesh_generation_provenance as provenance
+    monkeypatch.setattr(provenance.gmsh.option, 'getNumber', lambda name: 6 if name == 'Mesh.Algorithm' else 1)
+    data = provenance.capture(config, None)
+    with pytest.raises(MeshBlocked, match='변경'):
+        provenance.require_current(data, replace(config, quality=replace(config.quality, ige_enabled=True)), None)
+
+
+def test_ige_and_icn_violations_form_element_union(config, monkeypatch):
+    policy = QualitySettings(icn_enabled=True, icn_minimum=.8, ige_enabled=True, ige_minimum=.8,
+                             aspect_ratio_enabled=False, minimum_angle_enabled=False)
+    def icn(mesh):
+        return {int(tag): (.5 if i == 0 else .9) for i, tag in enumerate(mesh.element_ids)}
+    def ige(mesh):
+        return {int(tag): (.5 if i in (0, 1) else .9) for i, tag in enumerate(mesh.element_ids)}
+    monkeypatch.setattr(inspection, 'read_icn', icn)
+    monkeypatch.setattr(inspection, 'read_ige', ige)
+    with mesh_model(config) as scene:
+        result = inspection.inspect_mesh(snapshot(scene.membership), replace(scene.contract, quality=policy))
+        assert result.violating_count == 2
+        result.require_pass()

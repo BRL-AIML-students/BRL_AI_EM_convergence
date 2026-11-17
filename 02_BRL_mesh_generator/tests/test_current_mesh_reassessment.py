@@ -4,7 +4,7 @@ import gmsh
 import numpy as np
 import pytest
 
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from brl_mesh.mesh_generator_configuration import Configuration
 from brl_mesh.surface_mesh_generation import configure_mesh, run
 from brl_mesh.mesh_generator_errors import ConfigurationError
@@ -79,10 +79,12 @@ def test_explicit_curvature_generates_and_publishes(controller):
     assert 'run_ogive_' in gmsh.onelab.getString(ui.NAS_PATH)[0]
 
 
-def test_output_identifies_geometry_without_report_files(config):
+def test_output_identifies_geometry_with_quality_report(config):
     result = run(config)
     assert 'plate' in result.nas_path.parent.name
-    assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas'}
+    assert {p.name for p in result.nas_path.parent.iterdir()} == {'mesh.nas', 'mesh_quality.html'}
+    assert result.quality_report_path == result.nas_path.with_name('mesh_quality.html')
+    assert result.quality_report_path.is_file()
     header = result.nas_path.read_text(encoding='ascii').splitlines()
     geometry = json.loads(next(row.split(': ', 1)[1] for row in header if row.startswith('$ geometry input:')))
     assert geometry == config.to_dict()['geometry']

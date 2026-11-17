@@ -5,7 +5,7 @@ import pytest
 from brl_mesh.surface_mesh_generation import mesh_model
 from brl_mesh.mesh_generator_errors import MeshBlocked
 from brl_mesh.surface_mesh_snapshot import snapshot
-from brl_mesh.gmsh_quality_metrics import read_icn
+from brl_mesh.gmsh_quality_metrics import read_icn, read_ige, read_radius_ratio
 
 
 def test_plugin_maps_sparse_element_ids_and_preserves_views_visibility(square):
@@ -47,3 +47,57 @@ def test_plugin_failure_cleans_only_its_views(config, monkeypatch):
             read_icn(mesh)
         assert set(gmsh.view.getTags()) == {retained}
         assert np.array_equal(gmsh.model.mesh.getVisibility(mesh.element_ids), before_visibility)
+
+
+def test_ige_known_triangle_and_plugin_isolation(square, monkeypatch):
+    gmsh.initialize(readConfigFiles=False)
+    try:
+        gmsh.option.setNumber('General.Terminal', 0)
+        gmsh.model.add('ige')
+        gmsh.model.addDiscreteEntity(2, 7)
+        gmsh.model.mesh.addNodes(2, 7, square.node_ids, square.coordinates.ravel())
+        gmsh.model.mesh.addElementsByType(7, 2, square.element_ids, square.connectivity.ravel())
+        retained = gmsh.view.add('keep')
+        gmsh.model.mesh.setVisibility([100], 0)
+        before = gmsh.model.mesh.getVisibility(square.element_ids)
+        options = []
+        original = gmsh.plugin.setNumber
+        def record(plugin, key, value):
+            options.append((key, value))
+            return original(plugin, key, value)
+        monkeypatch.setattr(gmsh.plugin, 'setNumber', record)
+        icn = read_icn(square)
+        ige = read_ige(square)
+        assert list(ige) == list(square.element_ids)
+        assert list(ige.values()) == pytest.approx([.929231, .929231], abs=1e-5)
+        assert read_radius_ratio(square) == pytest.approx([.828427, .828427], abs=1e-5)
+        assert len(icn) == 2
+        assert [v for k, v in options if k == 'IGEMeasure'] == [0, 1]
+        assert [v for k, v in options if k == 'ICNMeasure'] == [1, 0]
+        assert [v for k, v in options if k == 'JacobianDeterminant'] == [0, 0]
+        assert [v for k, v in options if k == 'DimensionOfElements'] == [2, 2]
+        assert [v for k, v in options if k == 'Recompute'] == [1, 1]
+        assert set(gmsh.view.getTags()) == {retained}
+        assert np.array_equal(gmsh.model.mesh.getVisibility(square.element_ids), before)
+    finally:
+        gmsh.finalize()
+
+
+@pytest.mark.parametrize('bad', ['missing', 'duplicate', 'zero', 'nan', 'over'])
+def test_ige_rejects_bad_plugin_data_and_restores_state(config, monkeypatch, bad):
+    with mesh_model(config) as scene:
+        mesh = snapshot(scene.membership)
+        retained = gmsh.view.add('keep')
+        before = gmsh.model.mesh.getVisibility(mesh.element_ids)
+        original = gmsh.view.getModelData
+        def corrupt(*args):
+            kind, ids, values, time, components = original(*args)
+            ids, values = list(ids), list(values)
+            if bad == 'missing': ids, values = ids[:-1], values[:-1]
+            elif bad == 'duplicate': ids[0] = ids[1]
+            else: values[0] = [dict(zero=0., nan=float('nan'), over=1.1)[bad]]
+            return kind, ids, values, time, components
+        monkeypatch.setattr(gmsh.view, 'getModelData', corrupt)
+        with pytest.raises(MeshBlocked): read_ige(mesh)
+        assert set(gmsh.view.getTags()) == {retained}
+        assert np.array_equal(gmsh.model.mesh.getVisibility(mesh.element_ids), before)

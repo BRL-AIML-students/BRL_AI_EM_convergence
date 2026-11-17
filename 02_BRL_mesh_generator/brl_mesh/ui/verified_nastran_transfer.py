@@ -9,7 +9,7 @@ import stat
 import tempfile
 import threading
 
-from .mesh_generator_errors import MeshBlocked
+from ..mesh_generator_errors import MeshBlocked
 
 
 def _identity(stat):
@@ -57,10 +57,14 @@ def _locked_reader(path):
 
 class NasTransfer:
     """One owner of a staging directory; poll/commit from the calling thread."""
-    def __init__(self, source: Path, output: Path, name: str, digest: str):
+    def __init__(self, source: Path, output: Path, name: str, digest: str, report_digest: str):
         if Path(name).name != name or not name.startswith('run_'):
             raise MeshBlocked('작업 결과의 발행 이름이 유효하지 않습니다')
         self.source, self.output, self.name, self.digest = source, output, name, digest
+        self.report_digest = report_digest
+        self.report_identity = None
+        self.report_owned_identity = None
+        self.report_stream = None
         self.cancelled = threading.Event()
         self.stage = None
         self.identity = None
@@ -108,6 +112,28 @@ class NasTransfer:
             if before != after or _identity(target.stat()) != after:
                 raise MeshBlocked('NAS 전송 결과가 검증 중 변경됐습니다')
             self.identity = after
+            report_source = self.source.with_name('mesh_quality.html')
+            report_target = self.stage / 'mesh_quality.html'
+            with report_source.open('rb') as source_report:
+                before_source = _identity(os.fstat(source_report.fileno()))
+                if _digest(source_report, self.cancelled) != self.report_digest:
+                    raise MeshBlocked('검증 이후 품질 보고서가 변경됐습니다')
+                source_report.seek(0)
+                with report_target.open('xb') as out:
+                    info = os.fstat(out.fileno())
+                    self.report_owned_identity = (info.st_dev, info.st_ino)
+                    while block := source_report.read(1024 * 1024):
+                        if self.cancelled.is_set():
+                            raise InterruptedError('전송이 취소됐습니다')
+                        out.write(block)
+                if _identity(os.fstat(source_report.fileno())) != before_source:
+                    raise MeshBlocked('품질 보고서가 전송 중 변경됐습니다')
+            self.report_stream = _locked_reader(report_target)
+            self.report_identity = _identity(os.fstat(self.report_stream.fileno()))
+            if (_digest(self.report_stream, self.cancelled) != self.report_digest
+                    or _identity(os.fstat(self.report_stream.fileno())) != self.report_identity
+                    or _identity(report_target.stat()) != self.report_identity):
+                raise MeshBlocked('품질 보고서 전송 검증이 일치하지 않습니다')
             if self.cancelled.is_set():
                 raise InterruptedError('NAS 전송이 취소됐습니다')
         except Exception as exc:
@@ -122,6 +148,12 @@ class NasTransfer:
                 self.locked_stream = None
             except Exception as exc:
                 warnings.append(f'NAS 파일 핸들 정리 실패: {exc}')
+        if self.report_stream is not None:
+            try:
+                self.report_stream.close()
+                self.report_stream = None
+            except Exception as exc:
+                warnings.append(f'품질 보고서 핸들 정리 실패: {exc}')
         if self.stage is not None and not self.stage_done:
             try:
                 stage_info = self.stage.lstat()
@@ -138,6 +170,16 @@ class NasTransfer:
                             or (target_info.st_dev, target_info.st_ino) != self.owned_file_identity):
                         raise RuntimeError('임시 NAS 소유권이 달라 보존했습니다')
                     target.unlink()
+                report = self.stage / 'mesh_quality.html'
+                try:
+                    report_info = report.lstat()
+                except FileNotFoundError:
+                    report_info = None
+                if report_info is not None:
+                    if (self.report_owned_identity is None or not stat.S_ISREG(report_info.st_mode)
+                            or (report_info.st_dev, report_info.st_ino) != self.report_owned_identity):
+                        raise RuntimeError('임시 보고서 소유권이 달라 보존했습니다')
+                    report.unlink()
                 if any(self.stage.iterdir()):
                     raise RuntimeError('임시 폴더에 다른 파일이 있어 보존했습니다')
                 self.stage.rmdir()
@@ -167,12 +209,18 @@ class NasTransfer:
             raise InterruptedError('NAS 전송이 취소됐습니다')
         target = self.stage / 'mesh.nas'
         stage_stat = self.stage.stat()
+        report = self.stage / 'mesh_quality.html'
         if (self.stage.is_symlink() or (stage_stat.st_dev, stage_stat.st_ino) != self.stage_identity
-                or target.is_symlink() or set(self.stage.iterdir()) != {target}):
+                or target.is_symlink() or report.is_symlink() or set(self.stage.iterdir()) != {target, report}):
             raise MeshBlocked('NAS 전송 임시 폴더가 변경됐습니다')
         if _identity(target.stat()) != self.identity:
             raise MeshBlocked('검증 이후 NAS 전송 결과가 변경됐습니다')
+        if _identity(report.stat()) != self.report_identity:
+            raise MeshBlocked('검증 이후 품질 보고서가 변경됐습니다')
         if os.name != 'nt':
+            with report.open('rb') as stream:
+                if _digest(stream, self.cancelled) != self.report_digest:
+                    raise MeshBlocked('검증 이후 품질 보고서가 변경됐습니다')
             with target.open('rb') as stream:
                 if _digest(stream, self.cancelled) != self.digest:
                     raise MeshBlocked('검증 이후 NAS 전송 결과가 변경됐습니다')
@@ -183,6 +231,8 @@ class NasTransfer:
         # Keep writers excluded until immediately before rename.
         self.locked_stream.close()
         self.locked_stream = None
+        self.report_stream.close()
+        self.report_stream = None
         self.stage.rename(final)
         self.stage_done = True
         return str(final / 'mesh.nas')

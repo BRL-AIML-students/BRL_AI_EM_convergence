@@ -91,8 +91,8 @@ def test_maximum_passes_are_bounded_when_nothing_improves(config, monkeypatch):
         assert calls == ['Relocate2D', 'Laplace2D']
         assert len(result.attempts) == 2
         assert all(a.rolled_back for a in result.attempts)
-        with pytest.raises(MeshBlocked):
-            result.inspection.require_pass()
+        assert result.inspection.violating_count > 0
+        result.inspection.require_pass()
 
 
 def test_rejected_method_can_retry_after_an_accepted_coordinate_change(config, monkeypatch):
@@ -137,8 +137,8 @@ def test_bad_candidate_restores_coordinates_parameters_and_classification(config
         assert len(result.attempts) == 1 and result.attempts[0].rolled_back
         assert_exact_state(state)
         assert np.array_equal(result.mesh.coordinates, before.coordinates)
-        with pytest.raises(MeshBlocked, match='AR'):
-            result.inspection.require_pass()
+        assert result.inspection.violating_count > 0
+        result.inspection.require_pass()
 
 
 @pytest.mark.parametrize('change', ['connectivity', 'lower_connectivity', 'physical_group', 'entity'])
@@ -216,9 +216,9 @@ def test_failed_candidate_measurement_never_publishes_and_cleans_views(config, m
         assert result.attempts[0].rolled_back
         assert_exact_state(state)
         assert set(gmsh.view.getTags()) == {retained}
-        with pytest.raises(MeshBlocked):
-            publish(result.mesh, config, scene)
-    assert not config.output_dir.exists()
+        published = publish(result.mesh, config, scene)
+        assert published.quality_summary['violating_count'] > 0
+        assert published.nas_path.is_file()
 
 
 def test_topology_incomplete_never_calls_optimizer(config, monkeypatch):
@@ -241,8 +241,8 @@ def test_disabled_improvement_keeps_failure_and_is_not_success(config, monkeypat
         result = improve(membership, scene.contract, Improvement(False, 3))
         assert not result.attempts
         assert_exact_state(state)
-        with pytest.raises(MeshBlocked):
-            result.inspection.require_pass()
+        assert result.inspection.violating_count > 0
+        result.inspection.require_pass()
 
 
 def test_publication_rechecks_after_an_earlier_success(config):
@@ -289,3 +289,24 @@ def test_improved_shape_does_not_hide_preservation_regressions(config, monkeypat
         result = improve(membership, scene.contract, Improvement(True, 1))
         assert result.attempts[0].rolled_back
         assert_exact_state(state)
+
+
+def test_ige_only_tie_break_and_nonworsening(config):
+    from brl_mesh.mesh_quality_settings import QualitySettings
+    from brl_mesh.mesh_node_relocation import _acceptable
+    policy = QualitySettings(icn_enabled=False, aspect_ratio_enabled=False, minimum_angle_enabled=False,
+                             ige_enabled=True, ige_minimum=1.)
+    with mesh_model(config) as scene:
+        measured = inspect_mesh(snapshot(scene.membership), replace(scene.contract, quality=policy))
+        keys = list(measured.ige)
+        before = replace(measured, ige={key: .5 for key in keys})
+        better = replace(measured, ige={key: .6 for key in keys})
+        worse = replace(measured, ige={key: .4 for key in keys})
+        assert before.violating_count == better.violating_count == len(keys)
+        assert _acceptable(before, better)
+        assert not _acceptable(before, worse)
+        both = replace(policy, icn_enabled=True)
+        both_before = replace(before, shape=replace(before.shape, settings=both), icn={key: .7 for key in keys})
+        both_better = replace(better, shape=replace(better.shape, settings=both), icn={key: .7 for key in keys})
+        assert _acceptable(both_before, both_better)
+        assert not _acceptable(both_before, replace(both_better, ige={key: .4 for key in keys}))

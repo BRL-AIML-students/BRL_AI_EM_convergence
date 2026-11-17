@@ -6,7 +6,7 @@ import time
 import gmsh
 import pytest
 
-from brl_mesh import gmsh_onelab_mesh_interface as ui
+from brl_mesh.ui import gmsh_onelab_mesh_interface as ui
 from brl_mesh.mesh_generator_configuration import Configuration
 from brl_mesh.surface_mesh_generation import run
 from tests.mesh_test_helpers import distort_interior
@@ -105,14 +105,14 @@ def test_manual_edit_during_publication_cannot_publish_stale_mesh(controller, co
     assert not config.output_dir.exists()
 
 
-def test_current_defective_mesh_is_blocked_in_worker(controller, config):
+def test_current_shape_threshold_violation_is_reported_in_worker(controller, config):
     controller.perform(2)
     wait(controller)
     distort_interior(controller.scene.membership)
     controller.perform(4)
     wait(controller)
-    assert gmsh.onelab.getString(ui.STATUS)[0].startswith('Blocked:')
-    assert not config.output_dir.exists()
+    assert gmsh.onelab.getString(ui.STATUS)[0].startswith('NAS published')
+    assert list(config.output_dir.glob('run_*/mesh_quality.html'))
 
 
 def test_cancel_terminates_child_and_removes_only_job_temporary_files(controller, config):

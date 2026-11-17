@@ -30,10 +30,12 @@ import time
 import gmsh
 import numpy as np
 
-from brl_mesh import surface_mesh_snapshot as model, nastran_mesh_io as nas, native_mesh_worker as native_job, gmsh_onelab_mesh_interface as native_ui, mesh_generation_provenance as provenance
+from brl_mesh import surface_mesh_snapshot as model, nastran_mesh_io as nas, mesh_generation_provenance as provenance
+from brl_mesh.ui import native_mesh_worker as native_job
+from brl_mesh.ui import gmsh_onelab_mesh_interface as native_ui
 from brl_mesh.mesh_generator_configuration import Configuration
 from brl_mesh.surface_mesh_generation import Scene
-from brl_mesh.verified_nastran_transfer import NasTransfer
+from brl_mesh.ui.verified_nastran_transfer import NasTransfer
 
 
 _ROOT = Path(__file__).resolve().parent.parent

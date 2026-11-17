@@ -7,7 +7,7 @@ from time import perf_counter
 import gmsh
 
 from brl_mesh.mesh_generator_configuration import Configuration
-from brl_mesh.development_mesh_measurements import measure_development_metrics
+from brl_mesh.development.development_mesh_measurements import measure_development_metrics
 from brl_mesh.surface_mesh_generation import mesh_model, prepare_generated
 
 
